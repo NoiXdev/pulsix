@@ -77,7 +77,7 @@ export const deAgents: Messages['agents'] = {
     newZone: 'Neue Zone…',
     hostName: 'Hostname (optional)',
     hostNamePlaceholder: 'der eigene Hostname des Agents',
-    maxUses: 'Anzahl Agents, die dieses Token registrieren darf',
+    maxUses: 'Anzahl Agents, die sich mit diesem Token registrieren dürfen',
     validFor: 'Gültig für (Minuten)',
     createToken: 'Token erstellen',
   },

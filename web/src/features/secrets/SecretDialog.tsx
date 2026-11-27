@@ -145,12 +145,12 @@ export function SecretDialog({ org, secret, taken, onClose }: SecretDialogProps)
                 </div>
                 {re?.name && (
                   <span id={nameErr} className="text-[11px] text-destructive">
-                    {d.fieldName(i + 1)} — {re.name}
+                    {d.fieldName(i + 1)}{t.common.dash}{re.name}
                   </span>
                 )}
                 {re?.value && (
                   <span id={valueErr} className="text-[11px] text-destructive">
-                    {d.fieldValue(i + 1)} — {re.value}
+                    {d.fieldValue(i + 1)}{t.common.dash}{re.value}
                   </span>
                 )}
               </div>

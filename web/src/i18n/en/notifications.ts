@@ -226,7 +226,7 @@ export const enNotifications = {
       period: 'Period',
       cycle: 'Cycle',
     },
-    periodDays: (n: number) => `${n}d`,
+    periodDays: (n: number) => `${n} d`,
     empty: 'No on-call rotations yet.',
     deleteConfirm: (name: string) => `Delete rotation ${name}? Any route using it as a channel source reaches nobody afterwards.`,
     rosterAria: (name: string) => `${name} roster`,

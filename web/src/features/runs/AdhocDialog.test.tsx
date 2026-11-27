@@ -83,7 +83,7 @@ describe('AdhocDialog', () => {
     // Pinned above the page, not appended after it.
     const boxes = within(dialog).getAllByRole('checkbox');
     expect(boxes.map((b) => b.getAttribute('aria-label'))).toEqual(['zz-db-09', 'web-01', 'web-02']);
-    expect(within(dialog).getByText('1 host(s) selected')).toBeInTheDocument();
+    expect(within(dialog).getByText('1 host selected')).toBeInTheDocument();
 
     await typeCommand(user, dialog, 'uptime');
     await user.click(within(dialog).getByRole('button', { name: 'Run command' }));
@@ -123,7 +123,7 @@ describe('AdhocDialog', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Run command' });
     await user.click(await within(dialog).findByRole('checkbox', { name: 'web-01' }));
     await user.click(within(dialog).getByRole('checkbox', { name: 'web-02' }));
-    expect(within(dialog).getByText('2 host(s) selected')).toBeInTheDocument();
+    expect(within(dialog).getByText('2 hosts selected')).toBeInTheDocument();
     await typeCommand(user, dialog, 'echo hi');
     await user.click(within(dialog).getByRole('button', { name: 'Run command' }));
     expect(posted).toEqual({ host_ids: ['h1', 'h2'], module: 'shell', argv: 'echo hi' });

@@ -4,8 +4,8 @@ export const deWorkers: Messages['workers'] = {
   time: {
     never: 'nie',
     justNow: 'gerade eben',
-    minutesAgo: (n: number) => `vor ${n} Min.`,
-    hoursAgo: (n: number) => `vor ${n} Std.`,
+    minutesAgo: (n: number) => `vor ${n} min`,
+    hoursAgo: (n: number) => `vor ${n} h`,
     daysAgo: (n: number) => (n === 1 ? 'vor 1 Tag' : `vor ${n} Tagen`),
     expired: 'abgelaufen',
     today: 'heute',
@@ -65,7 +65,7 @@ export const deWorkers: Messages['workers'] = {
     nameRule: 'Nur Kleinbuchstaben, Ziffern und Bindestriche verwenden; der Name beginnt mit einem Buchstaben oder einer Ziffer.',
     createFailed: 'Das Token konnte nicht erstellt werden',
     tokenNote:
-      'Das Token ist eine Stunde gültig und nur einmal verwendbar. Der Worker verbindet sich nach außen, erhält sein Zertifikat und erscheint hier. Das Token wird nur jetzt angezeigt.',
+      'Das Token ist eine Stunde gültig und nur einmal verwendbar. Der Worker baut die Verbindung selbst auf, erhält sein Zertifikat und erscheint hier. Das Token wird nur jetzt angezeigt.',
     tokenLabel: 'Registrierungs-Token',
     copyToken: 'Token kopieren',
     snippetLabel: 'Worker-Snippet',

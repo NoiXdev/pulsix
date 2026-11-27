@@ -98,7 +98,7 @@ export const enRuns = {
   adhoc: {
     chooseHost: 'choose at least one host',
     commandRequired: 'a command is required',
-    started: (n: number) => `Command started on ${n} host(s)`,
+    started: (n: number) => (n === 1 ? 'Command started on 1 host' : `Command started on ${n} hosts`),
     failed: 'Starting the command failed',
     title: 'Run command',
     intro: 'Runs one shell command on the selected hosts. The output streams to the run view like any other run.',
@@ -108,7 +108,7 @@ export const enRuns = {
     noMatch: (q: string) => `No managed host matches “${q}”.`,
     noHosts: 'No managed hosts yet.',
     more: 'More managed hosts match. Search to narrow the list, or load more.',
-    selected: (n: number) => `${n} host(s) selected`,
+    selected: (n: number) => (n === 1 ? '1 host selected' : `${n} hosts selected`),
     command: 'Command',
     submit: 'Run command',
   },

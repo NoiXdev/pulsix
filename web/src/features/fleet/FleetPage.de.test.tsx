@@ -67,7 +67,7 @@ describe('FleetPage in German', () => {
     renderPage();
 
     expect(await screen.findByText('Aus')).toBeInTheDocument();
-    expect(screen.getByText('zuletzt gesehen vor 3 Std.')).toBeInTheDocument();
+    expect(screen.getByText('zuletzt gesehen vor 3 h')).toBeInTheDocument();
     expect(screen.getByText('letzter Zustand: kritisch')).toBeInTheDocument();
   });
 });

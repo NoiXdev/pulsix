@@ -30,8 +30,8 @@ export const deChecks: Messages['checks'] = {
   },
   interval: {
     seconds: (n: number) => `${n} s`,
-    minutes: (n: number) => `${n} Min.`,
-    hours: (n: number) => `${n} Std.`,
+    minutes: (n: number) => `${n} min`,
+    hours: (n: number) => `${n} h`,
   },
   enabled: 'aktiviert',
   disabled: 'deaktiviert',
@@ -47,7 +47,7 @@ export const deChecks: Messages['checks'] = {
   host: 'Host',
   matching: 'Abgleich läuft…',
   origin: {
-    seed: 'Standard',
+    seed: 'mitgeliefert',
     custom: 'eigen',
     shared: 'geteilt',
   },
@@ -417,7 +417,7 @@ export const deChecks: Messages['checks'] = {
       },
       body: {
         label: 'Anfrage-Body',
-        hint: 'Wird bei POST, PUT oder PATCH unverändert gesendet, höchstens 8 KiB Text. Er erscheint nie in Ergebnissen. POST, PUT, PATCH, DELETE und ein Body funktionieren nur, wenn der Betreiber des Pulsix-Servers sie eingeschaltet hat.',
+        hint: 'Wird bei POST, PUT oder PATCH unverändert gesendet, höchstens 8 KiB Text. Er erscheint nie in Ergebnissen. POST, PUT, PATCH, DELETE und ein Body funktionieren nur, wenn sie für diesen Pulsix-Server freigeschaltet sind.',
         placeholder: '{"ping": true}',
       },
       content_type: { label: 'Inhaltstyp des Bodys', hint: 'Nur mit einem Body. Leer bedeutet application/json.', placeholder: 'application/json' },
@@ -530,7 +530,7 @@ export const deChecks: Messages['checks'] = {
   groups: {
     noAccess: 'Überwachungsgruppen sind für Mitglieder dieser Organisation sichtbar.',
     deleteConfirm: (name: string) =>
-      `Überwachungsgruppe ${name} löschen? Die daran gebundenen Check-Definitionen werden mit gelöscht.`,
+      `Überwachungsgruppe ${name} löschen? Die daran gebundenen Check-Definitionen werden ebenfalls gelöscht.`,
     summary: (n: number) =>
       `${n === 1 ? '1 Gruppe' : `${n} Gruppen`} · die höhere Priorität gewinnt, wenn zwei Gruppen denselben Check-Schlüssel an einen Host binden`,
     newGroup: 'Neue Gruppe',
@@ -580,7 +580,7 @@ export const deChecks: Messages['checks'] = {
     },
     empty: 'Noch keine Regeln.',
     origin: {
-      seed: 'Standard',
+      seed: 'mitgeliefert',
       user: 'eigen',
     },
   },
@@ -621,7 +621,7 @@ export const deChecks: Messages['checks'] = {
   items: {
     noAccess: 'Element-Entscheidungen sind für Mitglieder dieser Organisation sichtbar.',
     deleteConfirm: (decision: string, pattern: string) =>
-      `Diese Entscheidung (${decision}) für das Muster „${pattern}“ löschen? Die Elemente, die sie nennt, werden wieder normal bewertet.`,
+      `Die Entscheidung „${decision}“ für das Muster „${pattern}“ löschen? Die Elemente, auf die das Muster zutrifft, werden wieder normal bewertet.`,
     summary: (n: number) =>
       `${n === 1 ? '1 Entscheidung' : `${n} Entscheidungen`} · eine Host-Entscheidung hat Vorrang vor einer Organisationsentscheidung für denselben Check`,
     newDecision: 'Neue Entscheidung',

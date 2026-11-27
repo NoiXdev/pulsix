@@ -22,7 +22,7 @@ export const deAppearance: Messages['appearance'] = {
   columns: {
     title: 'Gespeicherte Spaltenauswahl',
     hint: 'Listen merken sich die Spalten, die du anzeigst. Setze eine Liste zurück, um ihre Standardspalten wiederzuholen.',
-    state: (n: number, total: number) => `${n} von ${total} Spalten`,
+    state: (n: number, total: number) => `${n} von ${total === 1 ? '1 Spalte' : `${total} Spalten`}`,
     own: (n: number) => (n === 1 ? '1 Spalte' : `${n} Spalten`),
     standard: 'Standard',
     reset: 'Zurücksetzen',

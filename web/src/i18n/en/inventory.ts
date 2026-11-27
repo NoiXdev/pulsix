@@ -6,7 +6,7 @@ export const enInventory = {
     label: 'Inventory groups',
     inParent: (parent: string) => `in ${parent}`,
     count: (n: number) => (n === 1 ? '1 group' : `${n} groups`),
-    summary: (n: number) => `${n} inventory groups · each group owns a variable schema`,
+    summary: (n: number) => `${n === 1 ? '1 inventory group' : `${n} inventory groups`} · each group owns a variable schema`,
     columns: {
       group: 'Group',
       members: 'Members',
@@ -135,14 +135,14 @@ export const enInventory = {
     label: 'Child groups',
     count: (n: number) => (n === 1 ? '1 group' : `${n} groups`),
     columns: { group: 'Group', members: 'Members' },
-    members: (n: number) => `${n} members`,
+    members: (n: number) => (n === 1 ? '1 member' : `${n} members`),
     empty: 'No child groups.',
   },
   schemaTab: {
     saved: 'Schema saved',
-    savedIncomplete: (n: number) => `Schema saved · ${n} members need new values`,
+    savedIncomplete: (n: number) => (n === 1 ? 'Schema saved · 1 member needs new values' : `Schema saved · ${n} members need new values`),
     saveFailed: 'Saving the schema failed',
-    summary: (total: number, host: number) => `${total} fields · ${host} host-scoped`,
+    summary: (total: number, host: number) => `${total === 1 ? '1 field' : `${total} fields`} · ${host} host-scoped`,
     problems: (n: number) => `The schema has ${n} problem${n === 1 ? '' : 's'}; fields with problems are marked.`,
   },
   fields: {

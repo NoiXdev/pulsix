@@ -66,7 +66,7 @@ export const enAgents = {
     nameRule: 'Use lowercase letters, digits, dots and hyphens, up to 64 characters, starting and ending with a letter or digit.',
     createFailed: 'Creating the token failed',
     instructions: (agents: string, minutes: number) =>
-      `Run this on the host as root and paste the token below when the installer asks for it — it stays off the command line, where other users of the host could read it. The agent downloads itself from this manager, enrols with the token and appears here. The token is shown only now — it admits ${agents} and expires in ${minutes} minutes.`,
+      `Run this on the host as root and paste the token below when the installer asks for it — it stays off the command line, where other users of the host could read it. The agent downloads itself from this manager, enrols with the token and appears here. The token is shown only now — it admits ${agents} and expires in ${minutes === 1 ? '1 minute' : `${minutes} minutes`}.`,
     agentCount: (n: number) => (n === 1 ? 'one agent' : `${n} agents`),
     commandUnix: 'Linux and macOS',
     commandWindows: 'Windows (PowerShell as administrator)',

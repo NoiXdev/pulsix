@@ -382,7 +382,10 @@ export const enHosts = {
     noAccess: 'Alert routes are visible to members of this organization.',
     readFailed: 'Could not read this host’s alert routes.',
     none: 'No route covers this host — its alerts reach nobody.',
-    escalating: (n: number) => `${n} routes below escalate independently — acknowledging one route's chain does not stop another's.`,
+    escalating: (n: number) =>
+      n === 1
+        ? "1 route below escalates independently — acknowledging one route's chain does not stop another's."
+        : `${n} routes below escalate independently — acknowledging one route's chain does not stop another's.`,
   },
   checks: {
     manage: 'Manage checks',
@@ -411,7 +414,7 @@ export const enHosts = {
     status: { notJudged: 'not judged' },
     value: {
       http: (code: string, ms: string) => (ms ? `${code} · ${ms}` : code),
-      daysLeft: (n: string) => `${n} days left`,
+      daysLeft: (n: string) => (n === '1' ? '1 day left' : `${n} days left`),
       percent: (n: string) => `${n} %`,
       percentOn: (n: string, item: string) => `${n} % on ${item}`,
       ms: (n: string) => `${n} ms`,

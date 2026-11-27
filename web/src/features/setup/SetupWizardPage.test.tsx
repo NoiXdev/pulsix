@@ -194,7 +194,7 @@ describe('the language comes first', () => {
     await user.click(screen.getByRole('button', { name: 'Weiter' }));
     await screen.findByRole('heading', { name: 'Ausgehende E-Mails' });
     await user.click(screen.getByRole('button', { name: 'Weiter' }));
-    await user.click(await screen.findByRole('button', { name: 'Administrator anlegen und fortfahren' }));
+    await user.click(await screen.findByRole('button', { name: 'Instanz-Admin anlegen und fortfahren' }));
 
     expect(await screen.findByText('ENROLMENT PAGE')).toBeInTheDocument();
     expect(completeBody).toMatchObject({ default_locale: 'de' });
@@ -229,7 +229,7 @@ describe('the language comes first', () => {
     await user.click(screen.getByRole('button', { name: 'Weiter' }));
     await screen.findByRole('heading', { name: 'Ausgehende E-Mails' });
     await user.click(screen.getByRole('button', { name: 'Weiter' }));
-    await user.click(await screen.findByRole('button', { name: 'Administrator anlegen und fortfahren' }));
+    await user.click(await screen.findByRole('button', { name: 'Instanz-Admin anlegen und fortfahren' }));
     expect(await screen.findByText('ENROLMENT PAGE')).toBeInTheDocument();
     expect(completeBody).toMatchObject({ default_locale: 'de' });
   });
@@ -239,7 +239,7 @@ describe('the language comes first', () => {
  * left as it is (pre-filled or typed by the caller). */
 async function walkToCreate(user: ReturnType<typeof userEvent.setup>, de = false) {
   const l = de
-    ? { email: 'E-Mail-Adresse', password: 'Passwort', repeat: 'Passwort wiederholen', next: 'Weiter', org: 'Name der Organisation', slug: 'URL-Slug', mail: 'Ausgehende E-Mails', create: 'Administrator anlegen und fortfahren' }
+    ? { email: 'E-Mail-Adresse', password: 'Passwort', repeat: 'Passwort wiederholen', next: 'Weiter', org: 'Name der Organisation', slug: 'URL-Slug', mail: 'Ausgehende E-Mails', create: 'Instanz-Admin anlegen und fortfahren' }
     : { email: 'Email address', password: 'Password', repeat: 'Repeat password', next: 'Continue', org: 'Organization name', slug: 'URL slug', mail: 'Outgoing mail', create: 'Create administrator & continue' };
   await user.type(screen.getByLabelText('Name'), 'Root Admin');
   await user.type(screen.getByLabelText(l.email), 'root@acme.io');

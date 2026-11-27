@@ -25,7 +25,7 @@ export const enShell = {
     templates: 'Templates',
     schedules: 'Schedules',
     runs: 'Runs',
-    runRequestsBadge: (n: number) => `${n} pending run requests`,
+    runRequestsBadge: (n: number) => (n === 1 ? '1 pending run request' : `${n} pending run requests`),
     settings: 'Settings',
   },
   search: {

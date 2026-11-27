@@ -45,7 +45,7 @@ export const enCredentials = {
       expired: 'Expired',
       unused: 'Unused',
     },
-    summary: (n: number) => `${n} credentials · encrypted with the instance master key · values are never shown again`,
+    summary: (n: number) => `${n === 1 ? '1 credential' : `${n} credentials`} · encrypted with the instance master key · values are never shown again`,
     columns: {
       name: 'Name',
       kind: 'Kind',
@@ -88,7 +88,7 @@ export const enCredentials = {
     generateFailed: 'Generating failed',
     confirmRotate: (name: string) =>
       `Rotate ${name}? A new key is generated and installed on every host and jump host referencing it; the old key stops working once the rotation completes. Continue?`,
-    rotationStarted: (name: string, jobs: number) => `Rotation of ${name} started (${jobs} job(s))`,
+    rotationStarted: (name: string, jobs: number) => `Rotation of ${name} started (${jobs === 1 ? '1 job' : `${jobs} jobs`})`,
     rotated: (name: string) => `${name} rotated`,
     rotateFailed: 'Rotating failed',
     confirmDelete: (name: string) => `Delete credential ${name}?`,

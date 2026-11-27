@@ -46,11 +46,11 @@ export const deMembers: Messages['members'] = {
     title: 'Einladungslink weitergeben',
     before:
       'Der Versand ausgehender E-Mails ist auf dieser Instanz nicht eingerichtet, daher wurde keine E-Mail gesendet. Diesen Link persönlich an',
-    after: 'weitergeben — er funktioniert nur einmal und läuft in 7 Tagen ab.',
+    after: 'weitergeben – er funktioniert nur einmal und läuft in 7 Tagen ab.',
     linkLabel: 'Einladungslink',
     copy: 'Link kopieren',
     copied: 'Einladungslink kopiert',
-    copyFailed: 'Kopieren nicht möglich — den Link markieren und von Hand kopieren',
+    copyFailed: 'Kopieren nicht möglich – den Link markieren und von Hand kopieren',
     done: 'Fertig',
   },
   open: 'Öffnen',
