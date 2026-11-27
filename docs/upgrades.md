@@ -1269,6 +1269,22 @@ stored check with headers or a body as a plain GET of its URL, and one with a ne
 
 ## Behaviour changes to check after an upgrade
 
+- **A worker revocation now cuts its open run streams on every manager
+  (backlog 2.54, no migration, no protocol change):** the revocation
+  announces the worker over a database notification, and every manager with
+  the worker endpoint (`PULSIX_GRPC_LISTEN`) ends that worker's open event
+  streams within a second, instead of only the manager that served the
+  revocation. Each such manager keeps one more database session open for
+  this (the advisory-lock pool's cap goes from 8 to 9 sessions per manager);
+  count it in the database's `max_connections`. The session needs a
+  connection that keeps its session state, which the manager's advisory
+  locks already require: a pooler in transaction mode is not supported.
+  **Mixed versions while rolling several managers:** an older manager
+  neither announces a revocation nor listens. A revocation served by an
+  older manager reaches the newer ones' streams at their next rescan (at most
+  30 seconds); on an older manager, an open stream of a worker revoked
+  elsewhere stays open as before, until the worker closes it. Every manager
+  refuses the revoked worker's next call in either case.
 - **http checks can send other methods, headers and a body (backlog 3.84, no
   migration):** any member who may write checks can now make the manager send
   `OPTIONS` and request headers to every address it reaches outside

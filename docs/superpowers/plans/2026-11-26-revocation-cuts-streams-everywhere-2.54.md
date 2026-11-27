@@ -25,7 +25,8 @@
 
 ## Review Focus
 - Revoke on manager A, B's open stream for the worker closes; another worker's stream on B is untouched (`TestRevocationReachesAnotherManager`, internal/workers, real database both sides).
-- A revocation committed while B's session is down is caught by the rescan on reconnect (`TestRevocationWhileDisconnectedIsCaughtOnReconnect`), and a killed backend makes `Next` fail so the watcher reconnects (`TestRevocationSessionFailsWhenItsBackendDies`).
+- A revocation committed while B's session is down is caught by the rescan on reconnect; B's backend is terminated, so the test also pins that a killed backend makes `Next` fail and the watcher reconnect (`TestRevocationWhileDisconnectedIsCaughtOnReconnect`). `ListWorkersNotActive` reports revoked and unknown ids, not active ones (`TestRevocationSessionNotActive`).
+- Wiring: a manager with the worker endpoint holds one LISTEN session, one without holds none, `Close` ends it (`TestBuildListensForWorkerRevocations`, internal/app).
 - The notification arrives only after commit (`TestRevocationNotifiesOnCommitOnly`).
 - The loop's branches against fakes: hint verified, payload garbage → rescan, quiet wait → rescan, session error → close + reconnect, listen error → retry, ctx cancel → session closed (`TestRevocationWatcher*`, internal/workers).
 - `StreamRegistry.Workers` lists exactly the workers with open streams (`TestStreamRegistryWorkers`, internal/grpcsrv).
