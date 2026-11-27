@@ -320,8 +320,8 @@ func (l *Loop) streamSession(ctx context.Context, id *Identity) error {
 // whether to push — the secrets file's names and state, never a field,
 // and the local checks running from it with the problems of those that
 // do not. Asking the watcher here is also what makes it read the file
-// again, at most once a minute, and its local checks are applied before
-// they are reported.
+// again, at most once a minute, and its local checks and probe policy are
+// applied before they are reported.
 func (l *Loop) sendHeartbeat(sender *streamSender) error {
 	set, state := l.lookAndApplyLocal()
 	shadowed := l.scheduler.Shadowed()
@@ -335,8 +335,9 @@ func (l *Loop) sendHeartbeat(sender *streamSender) error {
 			LocalCheckProblems: localCheckProblems(set.LocalCheckProblems(), shadowed),
 			// Every platform the agent builds for runs the synthetic
 			// probes; one that cannot run somewhere (unprivileged ICMP)
-			// reports its own errors, as on the manager.
-			ProbesSupported:    true,
+			// reports its own errors, as on the manager. Only the host's
+			// own agent.yaml turns them off (backlog 3.82).
+			ProbesSupported:    l.probes.Enabled(),
 			ProbeConfigVersion: l.probes.Version(),
 		},
 	}})

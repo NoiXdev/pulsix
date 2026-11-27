@@ -1,0 +1,16 @@
+[
+  {
+    "content_type": "application/x-www-form-urlencoded",
+    "header": [
+      [
+        "Authorization",
+        "Basic QUMwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZjp0b2swMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiYw=="
+      ]
+    ],
+    "form": {
+      "Body": "5 alerts for Acme\nshop-1: crit - opened - shop/home http.assertion: status == 200 - saw 503\nweb-2: warn - worsened - cpu used_percent\ndb-1: crit - closed - disk//var used_percent\nedge-3: warn - opened - not seen since 2026-11-27T08:10:00Z\n... and 1 more\nhttps://pulsix.example/o/acme/alerts",
+      "From": "+15005550006",
+      "To": "+4915112345678"
+    }
+  }
+]

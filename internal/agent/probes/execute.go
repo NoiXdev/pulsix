@@ -23,7 +23,7 @@ func deadline(interval time.Duration) time.Duration {
 // hostile target must not take the agent down. A panicked round is logged
 // with its stack and delivers nothing, as on the manager; the slot runs
 // again on schedule.
-func (r *Runner) safeExecute(ctx context.Context, s *slot) (obs []probe.Observation) {
+func (r *Runner) safeExecute(ctx context.Context, s *slot, g *probe.Guard) (obs []probe.Observation) {
 	defer func() {
 		if p := recover(); p != nil {
 			r.log.Error("a probe panicked; this round is dropped",
@@ -32,13 +32,13 @@ func (r *Runner) safeExecute(ctx context.Context, s *slot) (obs []probe.Observat
 			obs = nil
 		}
 	}()
-	return r.execute(ctx, s)
+	return r.execute(ctx, s, g)
 }
 
-// execute runs one probe of s. Params that did not decode, or a plugin
+// execute runs one probe of s through g. Params that did not decode, or a plugin
 // this agent has no probe for, are that slot's metrics as errors, without
 // dialling anything.
-func (r *Runner) execute(ctx context.Context, s *slot) []probe.Observation {
+func (r *Runner) execute(ctx context.Context, s *slot, g *probe.Guard) []probe.Observation {
 	plugin := s.spec.Plugin
 	if s.paramsErr != nil {
 		return failAll(plugin, nil, "unreadable probe params: "+s.paramsErr.Error())
@@ -49,7 +49,7 @@ func (r *Runner) execute(ctx context.Context, s *slot) []probe.Observation {
 	}
 	pctx, cancel := context.WithTimeout(ctx, deadline(s.interval))
 	defer cancel()
-	return f(pctx, r.guard, s.params, s.spec.Address, nil)
+	return f(pctx, g, s.params, s.spec.Address, nil)
 }
 
 // failAll is msg on every metric a probe of plugin with params would have

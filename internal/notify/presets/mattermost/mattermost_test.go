@@ -27,7 +27,7 @@ type attachment struct {
 
 func render(t *testing.T, ev notify.Event) ([]byte, attachment) {
 	t.Helper()
-	body, err := mattermost.New().Render(ev, notify.PresetSettings{})
+	body, err := notifytest.Body(mattermost.New().Render(ev, notify.Target{Settings: notify.PresetSettings{}}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func TestMattermostSettings(t *testing.T) {
 // left out.
 func TestMattermostBoundsWideMessages(t *testing.T) {
 	for name, ev := range map[string]notify.Event{"digest": notifytest.WideDigest(), "alerts": notifytest.WideBatch()} {
-		body, err := mattermost.New().Render(ev, notify.PresetSettings{ChatID: "-1"})
+		body, err := notifytest.Body(mattermost.New().Render(ev, notify.Target{Settings: notify.PresetSettings{ChatID: "-1"}}))
 		if err != nil {
 			t.Fatal(err)
 		}

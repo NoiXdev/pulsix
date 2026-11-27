@@ -658,7 +658,10 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// dispatcher below and the synchronous "Send test".
 	notifyPresets := presets.Registry()
 	notifySender := notify.NewChannelSender(box, mailer,
-		outbound.NewClient(outbound.NewPolicy(cfg.NotifyAllowCIDRs, cfg.NotifyNAT64Prefixes), outbound.DefaultTimeout, nil), time.Now, notifyPresets)
+		outbound.NewClient(outbound.NewPolicy(cfg.NotifyAllowCIDRs, cfg.NotifyNAT64Prefixes), outbound.DefaultTimeout, nil), time.Now, notifyPresets,
+		// PagerDuty resolves an alert closed by the time its message goes
+		// out, so a late retry never re-opens it (backlog 4.8 review I1).
+		notify.WithAlertStates(NewNotifyAlertStates(alerts.NewSQLStore(appDB))))
 	notifyStore := notify.NewSQLStore(appDB)
 	notifySvc := notify.NewService(notify.Deps{
 		Channels: notifyStore, Deliveries: notifyStore, Rules: notifyStore, Digests: notifyStore, Box: box, Mail: mailer, Sender: notifySender, Presets: notifyPresets,

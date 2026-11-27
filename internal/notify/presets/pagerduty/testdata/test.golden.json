@@ -1,0 +1,24 @@
+[
+  {
+    "path": "/v2/change/enqueue",
+    "json": {
+      "routing_key": "R0123456789abcdef0123456789abcde",
+      "payload": {
+        "summary": "Test notification from Acme",
+        "source": "Acme",
+        "timestamp": "2026-11-27T08:30:00Z",
+        "custom_details": {
+          "lines": [
+            "This is a test message from a Pulsix notification channel. It worked."
+          ]
+        }
+      },
+      "links": [
+        {
+          "href": "https://pulsix.example/o/acme/settings/notifications",
+          "text": "Open in Pulsix"
+        }
+      ]
+    }
+  }
+]

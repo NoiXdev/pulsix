@@ -28,7 +28,7 @@ type payload struct {
 
 func render(t *testing.T, ev notify.Event) ([]byte, payload) {
 	t.Helper()
-	body, err := telegram.New().Render(ev, notify.PresetSettings{ChatID: "-1001234567890"})
+	body, err := notifytest.Body(telegram.New().Render(ev, notify.Target{Settings: notify.PresetSettings{ChatID: "-1001234567890"}}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +164,7 @@ func TestTelegramChatID(t *testing.T) {
 // left out.
 func TestTelegramBoundsWideMessages(t *testing.T) {
 	for name, ev := range map[string]notify.Event{"digest": notifytest.WideDigest(), "alerts": notifytest.WideBatch()} {
-		body, err := telegram.New().Render(ev, notify.PresetSettings{ChatID: "-1"})
+		body, err := notifytest.Body(telegram.New().Render(ev, notify.Target{Settings: notify.PresetSettings{ChatID: "-1"}}))
 		if err != nil {
 			t.Fatal(err)
 		}

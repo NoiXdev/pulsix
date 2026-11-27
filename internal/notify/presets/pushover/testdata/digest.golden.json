@@ -1,0 +1,15 @@
+[
+  {
+    "content_type": "application/x-www-form-urlencoded",
+    "form": {
+      "message": "Period: 20 Nov to 27 Nov 2026 (Europe/Berlin)\nNightly OS patching: 7 runs, 1 failure, 0 skipped or missed\nWeekly backup: 1 run, 0 failures, 1 skipped or missed\n+3 schedules without activity\nNightly OS patching: slowest run, Sat 21 Nov 11:30 CET: 4m12s",
+      "priority": "-1",
+      "timestamp": "1795768200",
+      "title": "Weekly schedule digest for Acme",
+      "token": "aToken0123456789aToken01234567",
+      "url": "https://pulsix.example/o/acme/schedules",
+      "url_title": "Open in Pulsix",
+      "user": "uUser0123456789uUser0123456789"
+    }
+  }
+]

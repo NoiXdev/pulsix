@@ -3,7 +3,6 @@ package tcp
 import (
 	"bytes"
 	"context"
-	"errors"
 	"net"
 	"strconv"
 	"time"
@@ -65,10 +64,13 @@ func probeTCP(ctx context.Context, g *probe.Guard, params map[string]any, addres
 
 	start := time.Now()
 	// ctx carries the timeout, so the dialer needs none of its own.
-	conn, err := g.Dialer(0).DialContext(ctx, "tcp", net.JoinHostPort(host, strconv.Itoa(port)))
+	// refused sees every address of a name the guard refuses: the dial
+	// returns only one address's error.
+	var refused probe.Refusal
+	conn, err := g.DialerNoting(0, &refused).DialContext(ctx, "tcp", net.JoinHostPort(host, strconv.Itoa(port)))
 	if err != nil {
-		if errors.Is(err, probe.ErrNotAllowed) {
-			return failAll(expect, entries, probe.ErrNotAllowed.Error())
+		if refused.Note(err); refused.Refused() {
+			return failAll(expect, entries, refused.Text())
 		}
 		return probe.Down("tcp", probe.Classify(err))
 	}

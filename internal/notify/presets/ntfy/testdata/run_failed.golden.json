@@ -1,0 +1,15 @@
+[
+  {
+    "path": "/",
+    "json": {
+      "topic": "pulsix-alerts",
+      "title": "Nightly OS patching: failed",
+      "message": "Template: patch-all\nFollow-up of: backup-all\nHosts: 12 (ok 10, changed 9, failed 1), no result 1 — 2 excluded for maintenance\nStarted: 2026-11-27T08:25:48Z\nDuration: 4m12s",
+      "priority": 5,
+      "tags": [
+        "rotating_light"
+      ],
+      "click": "https://pulsix.example/o/acme/runs/00000000-0000-7000-8000-000000000005"
+    }
+  }
+]

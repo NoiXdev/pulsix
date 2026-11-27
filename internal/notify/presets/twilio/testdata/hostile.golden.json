@@ -1,0 +1,16 @@
+[
+  {
+    "content_type": "application/x-www-form-urlencoded",
+    "header": [
+      [
+        "Authorization",
+        "Basic QUMwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZjp0b2swMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiYw=="
+      ]
+    ],
+    "form": {
+      "Body": "1 alert for Acme <!here> & @all\n... and 1 more\nhttps://pulsix.example/o/acme/alerts",
+      "From": "+15005550006",
+      "To": "+4915112345678"
+    }
+  }
+]

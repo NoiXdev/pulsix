@@ -1,0 +1,32 @@
+[
+  {
+    "json": {
+      "routing_key": "R0123456789abcdef0123456789abcde",
+      "event_action": "trigger",
+      "dedup_key": "pulsix:schedule:00000000-0000-7000-8000-000000000002:1795768200",
+      "payload": {
+        "summary": "Nightly OS patching: skipped",
+        "source": "Acme",
+        "severity": "warning",
+        "timestamp": "2026-11-27T08:30:00Z",
+        "group": "Acme",
+        "custom_details": {
+          "lines": [
+            "Template: patch-all",
+            "Reason: every targeted host is in a maintenance window",
+            "Outcome: skipped_maintenance",
+            "Due: 2026-11-27T08:30:00Z"
+          ]
+        }
+      },
+      "client": "Pulsix",
+      "client_url": "https://pulsix.example/o/acme/schedules/00000000-0000-7000-8000-000000000002",
+      "links": [
+        {
+          "href": "https://pulsix.example/o/acme/schedules/00000000-0000-7000-8000-000000000002",
+          "text": "Open in Pulsix"
+        }
+      ]
+    }
+  }
+]

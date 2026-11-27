@@ -41,7 +41,7 @@ type payload struct {
 
 func render(t *testing.T, ev notify.Event) ([]byte, payload) {
 	t.Helper()
-	body, err := slack.New().Render(ev, notify.PresetSettings{})
+	body, err := notifytest.Body(slack.New().Render(ev, notify.Target{Settings: notify.PresetSettings{}}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +176,7 @@ func TestSlackSettings(t *testing.T) {
 // left out.
 func TestSlackBoundsWideMessages(t *testing.T) {
 	for name, ev := range map[string]notify.Event{"digest": notifytest.WideDigest(), "alerts": notifytest.WideBatch()} {
-		body, err := slack.New().Render(ev, notify.PresetSettings{ChatID: "-1"})
+		body, err := notifytest.Body(slack.New().Render(ev, notify.Target{Settings: notify.PresetSettings{ChatID: "-1"}}))
 		if err != nil {
 			t.Fatal(err)
 		}

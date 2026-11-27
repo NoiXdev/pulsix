@@ -73,7 +73,7 @@ func probeICMP(ctx context.Context, g *probe.Guard, params map[string]any, addre
 
 	target, err := probe.ResolveAllowed(ctx, g, host)
 	if errors.Is(err, probe.ErrNotAllowed) {
-		return probe.FailAll(probe.ErrNotAllowed.Error(), metrics...)
+		return probe.FailAll(probe.RefusalText(err), metrics...)
 	}
 	if err != nil {
 		return probe.Down("icmp", probe.Classify(err))

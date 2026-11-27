@@ -20,12 +20,14 @@ type outcome struct {
 	kind    string // complete, retry, fail
 	in      time.Duration
 	errText string
+	pending []string
 }
 
 // fakeQueue hands out its pending deliveries once and records outcomes.
 type fakeQueue struct {
 	mu       sync.Mutex
 	pending  []notify.Claimed
+	ids      []uuid.UUID // every claim handed out, in order
 	outcomes map[uuid.UUID]outcome
 	claimErr error
 }
@@ -39,7 +41,17 @@ func (q *fakeQueue) Claim(_ context.Context, _ time.Duration, limit int) ([]noti
 	n := min(limit, len(q.pending))
 	out := q.pending[:n]
 	q.pending = q.pending[n:]
+	for _, c := range out {
+		q.ids = append(q.ids, c.Delivery.ID)
+	}
 	return out, nil
+}
+
+// pendingIDs is the id of the i-th claim handed out.
+func (q *fakeQueue) pendingIDs(i int) uuid.UUID {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.ids[i]
 }
 
 func (q *fakeQueue) record(c notify.Claimed, o outcome) error {
@@ -57,11 +69,11 @@ func (q *fakeQueue) Complete(_ context.Context, c notify.Claimed, _ time.Time) e
 }
 
 func (q *fakeQueue) Retry(_ context.Context, c notify.Claimed, in time.Duration, errText string, pending []string) error {
-	return q.record(c, outcome{kind: "retry", in: in, errText: errText})
+	return q.record(c, outcome{kind: "retry", in: in, errText: errText, pending: pending})
 }
 
-func (q *fakeQueue) Fail(_ context.Context, c notify.Claimed, errText string) error {
-	return q.record(c, outcome{kind: "fail", errText: errText})
+func (q *fakeQueue) Fail(_ context.Context, c notify.Claimed, errText string, pending []string) error {
+	return q.record(c, outcome{kind: "fail", errText: errText, pending: pending})
 }
 
 // scriptedSender answers per delivery id.

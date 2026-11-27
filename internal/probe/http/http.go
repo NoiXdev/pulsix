@@ -12,7 +12,6 @@ import (
 	"net/netip"
 	"net/url"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/noixdev/pulsix/internal/probe"
@@ -78,7 +77,7 @@ func probeHTTP(ctx context.Context, g *probe.Guard, gate *JSONGate, params map[s
 
 	// refused records a dial the guard refused on any hop: net/http does not
 	// promise to keep probe.ErrNotAllowed in the error chain it returns.
-	var refused atomic.Bool
+	var refused probe.Refusal
 	transport := newHTTPTransport(g, probe.BoolParam(params, "verify_tls", true), roots, &refused)
 	defer transport.CloseIdleConnections()
 	client := &http.Client{
@@ -102,8 +101,8 @@ func probeHTTP(ctx context.Context, g *probe.Guard, gate *JSONGate, params map[s
 
 	start := time.Now()
 	resp, err := client.Do(req)
-	if refused.Load() {
-		return fail(probe.ErrNotAllowed.Error())
+	if refused.Refused() {
+		return fail(refused.Text())
 	}
 	if err != nil {
 		// The client's error is never passed on: it quotes the URL.
@@ -221,16 +220,14 @@ func httpURL(raw, address string) (*url.URL, error) {
 
 // newHTTPTransport returns a single-use transport that dials only through
 // the guard, uses no proxy and keeps no connection for a later probe. A dial
-// the guard refuses sets refused.
-func newHTTPTransport(g *probe.Guard, verify bool, roots *x509.CertPool, refused *atomic.Bool) *http.Transport {
-	dialer := g.Dialer(0)
+// the guard refuses is noted in refused.
+func newHTTPTransport(g *probe.Guard, verify bool, roots *x509.CertPool, refused *probe.Refusal) *http.Transport {
+	dialer := g.DialerNoting(0, refused)
 	return &http.Transport{
 		Proxy: nil,
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			conn, err := dialer.DialContext(ctx, network, addr)
-			if errors.Is(err, probe.ErrNotAllowed) {
-				refused.Store(true)
-			}
+			refused.Note(err)
 			return conn, err
 		},
 		TLSClientConfig:        httpTLSConfig(verify, roots),

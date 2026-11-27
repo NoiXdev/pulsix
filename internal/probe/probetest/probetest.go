@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -250,4 +251,24 @@ func TCPServer(t *testing.T, network, addr, banner string) (port int, received <
 		}
 	}()
 	return ln.Addr().(*net.TCPAddr).Port, got
+}
+
+// LocalhostBothFamilies skips the test unless localhost resolves to both
+// 127.0.0.1 and ::1 (from the hosts file, so no query leaves the machine):
+// tests of a name with several addresses need both.
+func LocalhostBothFamilies(t *testing.T) {
+	t.Helper()
+	ips, err := net.DefaultResolver.LookupNetIP(t.Context(), "ip", "localhost")
+	if err != nil {
+		t.Skipf("localhost does not resolve: %v", err)
+	}
+	var v4, v6 bool
+	for _, ip := range ips {
+		ip = ip.Unmap()
+		v4 = v4 || ip == netip.MustParseAddr("127.0.0.1")
+		v6 = v6 || ip == netip.IPv6Loopback()
+	}
+	if !v4 || !v6 {
+		t.Skipf("localhost resolves to %v here; the test needs 127.0.0.1 and ::1", ips)
+	}
 }

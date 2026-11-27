@@ -34,8 +34,8 @@ func (fakePreset) CheckSettings(s notify.PresetSettings) (notify.PresetSettings,
 	return s, nil
 }
 
-func (fakePreset) Render(ev notify.Event, s notify.PresetSettings) ([]byte, error) {
-	return json.Marshal(map[string]string{"kind": string(ev.Kind), "chat": s.ChatID})
+func (fakePreset) Render(ev notify.Event, t notify.Target) ([]notify.Request, error) {
+	return notify.JSONRequest(json.Marshal(map[string]string{"kind": string(ev.Kind), "chat": t.Settings.ChatID}))
 }
 
 type openPreset struct{ fakePreset }
@@ -99,7 +99,7 @@ func TestPresetValidation(t *testing.T) {
 		{"content type header", ctype(presetInput("d", "fake", good, "room")), "Content-Type"},
 		{"settings refused", presetInput("e", "fake", good, "lobby"), "chat id must be room"},
 		{"url refused", presetInput("f", "fake", "https://chat.example.test/bot123:s3cr3t-token/other", "room"), "must end in /send"},
-		{"chat id on raw", presetInput("g", "", good, "room"), "chat id"},
+		{"chat id on raw", presetInput("g", "", good, "room"), "chat_id"},
 	}
 	for _, c := range cases {
 		w := presetWorld(t)

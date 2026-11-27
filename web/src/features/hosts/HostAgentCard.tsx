@@ -73,6 +73,14 @@ export function HostAgentCard({ org, hostId, hostName, zoneId, canWrite }: { org
               {expiryLabel(agent.cert_expires_at, now, t)}
             </span>
           </div>
+          {/* Backlog 3.82: whether the agent is a vantage point for other
+              hosts' synthetic checks at all. "No" covers an agent too old
+              to probe, one whose agent.yaml turns it off and one whose
+              agent.yaml is refused (probing stays off until it is fixed). */}
+          <div className="flex justify-between gap-2">
+            <span className="text-muted-foreground">{t.hosts.agent.probes}</span>
+            <span className="text-right">{agent.probes_supported ? t.hosts.agent.probesOn : t.hosts.agent.probesOff}</span>
+          </div>
           <div className="flex flex-col gap-1">
             <div className="flex justify-between gap-2">
               <span className="text-muted-foreground">{t.hosts.agent.secrets}</span>

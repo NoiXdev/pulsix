@@ -1,0 +1,15 @@
+[
+  {
+    "path": "/",
+    "json": {
+      "topic": "pulsix-alerts",
+      "title": "Test notification from Acme",
+      "message": "This is a test message from a Pulsix notification channel. It worked.",
+      "priority": 3,
+      "tags": [
+        "information_source"
+      ],
+      "click": "https://pulsix.example/o/acme/settings/notifications"
+    }
+  }
+]
