@@ -46,6 +46,58 @@ func TestStreamRegistry(t *testing.T) {
 	}
 }
 
+// TestConcurrentCloseWorkerWaitsForTheAppendInFlight (backlog 2.54 review
+// I1): the serving manager's own revocation watcher can call CloseWorker
+// while Service.Revoke's CloseWorker is still to come. Whichever call comes
+// second must not return early with 0: both report the stream and both
+// return only once the append in flight has finished, so the requeue that
+// follows Revoke's call never races a stray event.
+func TestConcurrentCloseWorkerWaitsForTheAppendInFlight(t *testing.T) {
+	r := NewStreamRegistry()
+	w := uuid.Must(uuid.NewV7())
+	ts, release := r.track(w)
+	defer release()
+	appending, finish := make(chan struct{}), make(chan struct{})
+	appended := make(chan error, 1)
+	go func() {
+		appended <- ts.store(func() error { close(appending); <-finish; return nil })
+	}()
+	<-appending
+
+	type result struct{ n int }
+	first, second := make(chan result, 1), make(chan result, 1)
+	go func() { first <- result{r.CloseWorker(w)} }()  // the watcher
+	<-ts.revoked                                       // the first close is under way
+	go func() { second <- result{r.CloseWorker(w)} }() // Service.Revoke's own
+	select {
+	case res := <-second:
+		t.Fatalf("the second CloseWorker returned %d while an append was in flight", res.n)
+	case res := <-first:
+		t.Fatalf("the first CloseWorker returned %d while an append was in flight", res.n)
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(finish)
+	if err := <-appended; err != nil {
+		t.Fatal(err)
+	}
+	for name, c := range map[string]chan result{"first": first, "second": second} {
+		select {
+		case res := <-c:
+			if res.n != 1 {
+				t.Fatalf("%s CloseWorker = %d, want the one stream", name, res.n)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s CloseWorker never returned", name)
+		}
+	}
+	if err := ts.store(func() error { t.Fatal("an append ran after the cut"); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.Workers(); len(got) != 0 {
+		t.Fatalf("Workers after the cut = %v", got)
+	}
+}
+
 // TestStreamRegistryWorkers: Workers lists each worker with an open stream
 // once; a released or closed worker drops out.
 func TestStreamRegistryWorkers(t *testing.T) {

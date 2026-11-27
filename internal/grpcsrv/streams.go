@@ -1,6 +1,7 @@
 package grpcsrv
 
 import (
+	"maps"
 	"sync"
 
 	"github.com/google/uuid"
@@ -22,6 +23,7 @@ type StreamRegistry struct {
 // shut has returned no append of the stream is in flight and none starts.
 type trackedStream struct {
 	revoked chan struct{} // closed by shut: the handler ends the stream
+	signal  sync.Once     // closes revoked once, however many shuts run
 
 	mu  sync.Mutex
 	cut bool
@@ -41,9 +43,10 @@ func (t *trackedStream) store(appendEvent func() error) error {
 
 // shut cuts the stream. It signals the handler first, so the RPC ends (and
 // its context cancels an append in flight) without waiting, then takes the
-// lock: once shut returns, no append of the stream runs or starts.
+// lock: once shut returns, no append of the stream runs or starts. It is
+// safe to call concurrently: every caller waits for the append in flight.
 func (t *trackedStream) shut() {
-	close(t.revoked)
+	t.signal.Do(func() { close(t.revoked) })
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.cut = true
@@ -82,15 +85,29 @@ func (r *StreamRegistry) track(workerID uuid.UUID) (*trackedStream, func()) {
 // append in flight finishes first, and no later one runs. A revocation
 // relies on that to requeue the worker's jobs after this call without a
 // stray event landing in the requeued job's log.
+//
+// The streams stay registered until they are shut, so a CloseWorker that
+// runs while another is still shutting them (the serving manager's own
+// revocation watcher racing Service.Revoke, backlog 2.54) finds them too,
+// counts them and waits for the same append in flight.
 func (r *StreamRegistry) CloseWorker(workerID uuid.UUID) int {
 	r.mu.Lock()
-	streams := r.byWorker[workerID]
-	delete(r.byWorker, workerID)
+	streams := maps.Clone(r.byWorker[workerID])
 	r.mu.Unlock()
 	// Shut outside r.mu: waiting on one stream's append must not stall
 	// every other worker's track and release.
 	for _, ts := range streams {
 		ts.shut()
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if open, ok := r.byWorker[workerID]; ok {
+		for id := range streams {
+			delete(open, id)
+		}
+		if len(open) == 0 {
+			delete(r.byWorker, workerID)
+		}
 	}
 	return len(streams)
 }
