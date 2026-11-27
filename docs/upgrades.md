@@ -1284,7 +1284,7 @@ secrets. Stop every
 manager instance before the new version starts. A downgrade needs the usual restore of a backup
 from before the upgrade.
 
-Run request approvals that bind their follow-ups (backlog 2.143) add migration 00138 and no
+Run request approvals that bind their follow-ups (backlog 2.143) add migration 00139 and no
 proto change and no dependency: one nullable column `run_requests.approved_follow_ups`
 (jsonb, no default, so the ADD COLUMN touches only the catalog). Nothing is dropped or
 rewritten; a backup carries the column with `run_requests`. An approval made by this
@@ -2376,7 +2376,7 @@ file, then rename) so that a half-written file does not turn probing off for a m
   approving it again replays the jobs that exist. A host of such a zone that the earlier
   attempt's job does not cover (it joined the zone since, or the earlier attempt left it
   out) would never run, so such a re-approval is now refused, before anything is
-  recorded, with 409 (`code: hosts_joined_covered_zone`, and `zones` with each zone's id,
+  recorded, with 409 (`code: hosts_not_covered_in_zone`, and `zones` with each zone's id,
   name and the hosts not covered); the detail says "… is not covered by the earlier
   attempt's run in zone …". Nothing is enqueued and the request stays pending. File a new
   request for those hosts, or approve again once the earlier run in that zone has been
@@ -2384,7 +2384,7 @@ file, then rename) so that a half-written file does not turn probing off for a m
   then enqueued afresh), or reject the request. A re-approval that leaves out no host
   works as before; schedules, webhooks and follow-ups are unaffected.
 - **The follow-ups an approval starts are bound to their hosts and vars (backlog 2.143,
-  migration 00138):** with Settings → General letting approvals start follow-ups, the
+  migration 00139):** with Settings → General letting approvals start follow-ups, the
   approval page shows for each follow-up the hosts it can run on (its template's targets
   among the hosts the run before it is bound to) and its extra vars, and the approval binds
   them, like the run's own. A follow-up whose hosts or vars changed after the approval, one

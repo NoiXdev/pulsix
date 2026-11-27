@@ -403,7 +403,7 @@ func runRequestDetail(ctx context.Context, deps Deps, scope Scope, id uuid.UUID)
 // coveredZonesCode is the code of the 409 that refuses a re-approval
 // whose replay would leave out hosts that joined a covered zone (backlog
 // 2.142). It is a contract with the SPA, not prose.
-const coveredZonesCode = "hosts_joined_covered_zone"
+const coveredZonesCode = "hosts_not_covered_in_zone"
 
 // coveredZonesProblem is that 409: the problem document plus the code and
 // the zones with the hosts that joined them.

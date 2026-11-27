@@ -149,10 +149,10 @@ export async function firstJobOfRunGroup(org: string, runGroupId: string): Promi
   return body.jobs?.[0]?.id;
 }
 
-/** HOSTS_JOINED_COVERED_ZONE is the code of the 409 that refuses a re-approval whose
+/** HOSTS_NOT_COVERED_IN_ZONE is the code of the 409 that refuses a re-approval whose
  * replay would leave out hosts that joined a zone the first approval already started its
  * run in (internal/api coveredZonesCode, backlog 2.142): a contract, not prose. */
-export const HOSTS_JOINED_COVERED_ZONE = 'hosts_joined_covered_zone';
+export const HOSTS_NOT_COVERED_IN_ZONE = 'hosts_not_covered_in_zone';
 
 /** CoveredZone is one zone of that refusal with the hosts that joined it. */
 export interface CoveredZone {
@@ -166,7 +166,7 @@ export interface CoveredZone {
 export function coveredZonesOf(err: unknown): CoveredZone[] | undefined {
   if (!(err instanceof ApiError) || err.status !== 409) return undefined;
   const body = err.body as { code?: unknown; zones?: unknown } | undefined;
-  if (body?.code !== HOSTS_JOINED_COVERED_ZONE || !Array.isArray(body.zones)) return undefined;
+  if (body?.code !== HOSTS_NOT_COVERED_IN_ZONE || !Array.isArray(body.zones)) return undefined;
   return body.zones as CoveredZone[];
 }
 

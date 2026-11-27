@@ -182,7 +182,7 @@ describe('RunRequestDetailPage', () => {
             title: 'Conflict',
             status: 409,
             detail: 'approving again would not run the hosts …',
-            code: 'hosts_joined_covered_zone',
+            code: 'hosts_not_covered_in_zone',
             zones: [{ id: 'z1', name: 'eu', hosts: [{ id: 'h3', name: 'web-03' }, { id: 'h4', name: 'web-04' }] }],
           }),
           { status: 409, headers: { 'Content-Type': 'application/json' } },

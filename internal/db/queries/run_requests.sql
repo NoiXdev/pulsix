@@ -75,7 +75,7 @@ WHERE t.id = ANY(sqlc.arg(ids)::uuid[]);
 -- always finds it (migration 00103), and the commit the run is pinned to
 -- (migration 00123; NULL for none) and the hosts it enrols agents on
 -- (migration 00127; NULL for no list), and what it binds of the follow-ups
--- it starts (migration 00138; NULL for none). Only a run or a retry takes a
+-- it starts (migration 00139; NULL for none). Only a run or a retry takes a
 -- run group: the approval of another kind starts no run (migration 00129).
 UPDATE run_requests SET status = sqlc.arg(status), decided_by = sqlc.arg(decided_by), decided_at = sqlc.arg(decided_at),
   approved_fingerprint = sqlc.narg(approved_fingerprint), pinned_commit = sqlc.narg(pinned_commit),

@@ -75,7 +75,7 @@ func TestRunRequestReapprovalRefusesAHostThatJoinedACoveredZone(t *testing.T) {
 	if err := json.Unmarshal([]byte(body), &problem); err != nil {
 		t.Fatal(err)
 	}
-	if problem.Code != "hosts_joined_covered_zone" || len(problem.Zones) != 1 || problem.Zones[0].ID != f.zoneA.String() ||
+	if problem.Code != "hosts_not_covered_in_zone" || len(problem.Zones) != 1 || problem.Zones[0].ID != f.zoneA.String() ||
 		len(problem.Zones[0].Hosts) != 1 || problem.Zones[0].Hosts[0].ID != joined.ID.String() || problem.Zones[0].Hosts[0].Name != "web-1b" {
 		t.Fatalf("problem = %s", body)
 	}
