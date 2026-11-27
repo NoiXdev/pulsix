@@ -23,6 +23,9 @@ func assertionDevice() *fakeDevice {
 	dev.set(".1.3.6.1.9.4", gosnmp.Null, nil)
 	dev.set(".1.3.6.1.9.5", gosnmp.OctetString, []byte(strings.Repeat("x", 600)+"\"tail"))
 	dev.set(".1.3.6.1.9.6", gosnmp.OctetString, []byte{})
+	dev.set(".1.3.6.1.9.7", gosnmp.OpaqueFloat, float32(0.15))
+	dev.set(".1.3.6.1.9.8", gosnmp.Counter64, uint64(18446744073709551615))
+	dev.set(".1.3.6.1.9.9", gosnmp.TimeTicks, uint32(360000))
 	dev.rtt = 12 * time.Millisecond
 	return dev
 }
@@ -30,6 +33,7 @@ func assertionDevice() *fakeDevice {
 var assertionOIDs = []any{
 	"load=1.3.6.1.9.1", "state=1.3.6.1.9.2", "la=1.3.6.1.9.3", "null=1.3.6.1.9.4",
 	"missing=1.3.6.1.9.99", "long=1.3.6.1.9.5", "empty=1.3.6.1.9.6", "bad=3.1",
+	"temp=1.3.6.1.9.7", "octets=1.3.6.1.9.8", "ticks=1.3.6.1.9.9",
 }
 
 // TestSNMPValueAssertions (backlog 3.134, plan R2–R5): value("name")
@@ -66,6 +70,19 @@ func TestSNMPValueAssertions(t *testing.T) {
 		{`a=value("null") < 1`, "", "", errUnsupportedType},
 		{`a=value("bad") < 1`, "", "", errBadOID},
 		{`a=value("nowhere") < 1`, "", "", errNoSuchEntry},
+		// An OpaqueFloat is widened through its shortest float32 spelling
+		// (review M1): 0.15 is 0.15, not 0.15000000596046448.
+		{`a=value("temp") == 0.15`, "pass", "0.15", ""},
+		{`a=value("temp") <= 0.15`, "pass", "0.15", ""},
+		{`a=value("temp") == "0.15"`, "pass", "0.15", ""},
+		// A Counter64 keeps its exact decimal spelling for text and the
+		// actual (review M2); numeric comparisons are float64's.
+		{`a=value("octets") == "18446744073709551615"`, "pass", "18446744073709551615", ""},
+		{`a=value("octets") matches "615$"`, "pass", "18446744073709551615", ""},
+		{`a=value("octets") > 1`, "pass", "18446744073709551615", ""},
+		// A TimeTicks oid reads hundredths of a second, as snmp.value
+		// holds it (review M3); uptime is in seconds.
+		{`a=value("ticks") == 360000`, "pass", "360000", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.entry, func(t *testing.T) {
@@ -203,4 +220,31 @@ func numberedOIDs(n int) []any {
 		out[i] = fmt.Sprintf("v%d=1.3.6.1.8.%d", i, i)
 	}
 	return out
+}
+
+// TestReadValueSpellsNumbersExactly (review M1, M2): snmp.value of an
+// OpaqueFloat is its float32 spelling read as a float64, and a value
+// keeps the decimal spelling of the number the device sent.
+func TestReadValueSpellsNumbersExactly(t *testing.T) {
+	for _, tc := range []struct {
+		typ     gosnmp.Asn1BER
+		v       any
+		num     float64
+		spelled string
+	}{
+		{gosnmp.OpaqueFloat, float32(0.15), 0.15, "0.15"},
+		{gosnmp.OpaqueFloat, float32(-2.5e-7), -2.5e-7, "-0.00000025"},
+		{gosnmp.OpaqueDouble, 0.1, 0.1, "0.1"},
+		{gosnmp.Counter64, uint64(18446744073709551615), 18446744073709551615, "18446744073709551615"},
+		{gosnmp.Integer, -42, -42, "-42"},
+		{gosnmp.Gauge32, uint(77), 77, "77"},
+	} {
+		v := readValue(gosnmp.SnmpPDU{Type: tc.typ, Value: tc.v})
+		if v.err != "" || v.isText || v.num != tc.num || v.spelled != tc.spelled {
+			t.Errorf("readValue(%v %v) = %+v, want %v spelled %q", tc.typ, tc.v, v, tc.num, tc.spelled)
+		}
+		if o := v.observation("x"); o.Value == nil || *o.Value != tc.num {
+			t.Errorf("observation of %v = %+v, want %v", tc.v, o, tc.num)
+		}
+	}
 }

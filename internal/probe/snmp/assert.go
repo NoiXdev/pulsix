@@ -61,7 +61,8 @@ func (r reading) judge(a assert.Assertion, w *judge.Work) judge.Verdict {
 }
 
 // judgeValue judges an oids entry's value by the assertion's kind (plan
-// R3–R5): a number compared as text by its decimal spelling, text compared
+// R3–R5): a number compared as text by its exact decimal spelling (a
+// numeric comparison is float64's, exact up to 2^53), text compared
 // as a number when it is one; a missing object is absent and fails every
 // operator, any other read error is the assertion's. The actual shows the
 // value by its own type: a number bare, a text quoted.
@@ -72,11 +73,12 @@ func judgeValue(a assert.Assertion, v value, w *judge.Work) judge.Verdict {
 	case v.err != "":
 		return judge.Failed(v.err)
 	case !v.isText && a.Numeric():
-		return judge.Number(a, v.num)
+		// Compared as float64 (exact up to 2^53), shown as sent.
+		return judge.Verdict{Holds: a.HoldsNumber(v.num), Actual: v.spelled}
 	case !v.isText:
-		verdict := w.Text(a, strconv.FormatFloat(v.num, 'f', -1, 64), true)
+		verdict := w.Text(a, v.spelled, true)
 		if verdict.Err == "" {
-			verdict.Actual = judge.NumberActual(a.Subject(), v.num)
+			verdict.Actual = v.spelled
 		}
 		return verdict
 	}
