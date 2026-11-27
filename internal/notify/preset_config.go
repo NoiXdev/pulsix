@@ -46,7 +46,10 @@ func (s *Service) webhookURL(aad []byte, preset Preset, in WebhookInput, setting
 // holds (the same preset on update), and every one the preset names is
 // required. A channel whose preset takes no secrets is given none.
 // Errors name a secret, never its value.
-func (s *Service) presetSecrets(aad []byte, preset Preset, in map[string]string, stored []storedHeader, keep bool) ([]storedHeader, error) {
+//
+// rebound names the setting whose change voided the kept secrets
+// (secretsKept), for the error.
+func (s *Service) presetSecrets(aad []byte, preset Preset, in map[string]string, stored []storedHeader, keep bool, rebound string) ([]storedHeader, error) {
 	c, ok := preset.(Credentialed)
 	if !ok {
 		if len(in) > 0 {
@@ -74,10 +77,29 @@ func (s *Service) presetSecrets(aad []byte, preset Preset, in map[string]string,
 			continue
 		}
 		i := slices.IndexFunc(stored, func(h storedHeader) bool { return h.Name == name })
+		if rebound != "" && i >= 0 {
+			return nil, fmt.Errorf("%w: changing %s needs the secret %s again", ErrInvalidInput, rebound, name)
+		}
 		if !keep || i < 0 {
 			return nil, fmt.Errorf("%w: the secret %s is required", ErrInvalidInput, name)
 		}
 		out = append(out, stored[i])
 	}
 	return out, nil
+}
+
+// secretsKept decides whether a preset's stored secrets may be kept: only
+// on an update of the same preset (keep), and not when the setting they
+// belong to changed (SecretScoped: Twilio's account SID, review M2) —
+// then rebound names that setting.
+func secretsKept(preset Preset, keep bool, stored, now PresetSettings) (bool, string) {
+	sc, ok := preset.(SecretScoped)
+	if !ok || !keep {
+		return keep, ""
+	}
+	name, value := sc.SecretScope(now)
+	if _, was := sc.SecretScope(stored); was != value {
+		return false, name
+	}
+	return true, ""
 }

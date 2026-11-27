@@ -23,6 +23,7 @@ func Body(reqs []notify.Request, err error) ([]byte, error) {
 
 // dumped is one request as a golden file shows it.
 type dumped struct {
+	Key         string            `json:"key,omitempty"`
 	Path        string            `json:"path,omitempty"`
 	ContentType string            `json:"content_type,omitempty"`
 	Header      [][2]string       `json:"header,omitempty"`
@@ -39,7 +40,7 @@ func Dump(reqs []notify.Request, err error) ([]byte, error) {
 	}
 	out := make([]dumped, len(reqs))
 	for i, r := range reqs {
-		d := dumped{Path: r.Path, ContentType: r.ContentType, Header: r.Header}
+		d := dumped{Key: r.Key, Path: r.Path, ContentType: r.ContentType, Header: r.Header}
 		switch r.ContentType {
 		case "", "application/json":
 			if !json.Valid(r.Body) {

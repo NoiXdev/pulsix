@@ -1,10 +1,12 @@
 package notify
 
 import (
-	"errors"
+	"context"
 	"fmt"
 	"net/url"
 	"slices"
+
+	"github.com/google/uuid"
 )
 
 // PresetSettings are a preset channel's own settings, none of them secret
@@ -52,17 +54,24 @@ func (s PresetSettings) Only(service string, allowed ...string) error {
 
 // Target is what one send of a preset channel renders for: the stored
 // settings, the opened channel URL and the opened preset secrets. It is
-// held only for the duration of that send and never logged.
+// held only for the duration of that send and never logged. Closed is
+// set for an AlertStateAware preset rendering an alert batch: the batch's
+// alerts that are closed (or gone) now, at send time.
 type Target struct {
 	Settings PresetSettings
 	URL      *url.URL
 	Secrets  map[string]string
+	Closed   map[uuid.UUID]bool
 }
 
 // Request is one HTTP request a preset sends for an event (backlog 4.8).
 // The sender adds everything else of a webhook send: the method (POST),
 // the operator's headers, the X-Pulsix-* headers and the signature.
 type Request struct {
+	// Key names the request among its delivery's requests, the same on
+	// every render of the same event, so a retry sends only the ones
+	// still owed (a delivery's progress). Empty: its position.
+	Key string
 	// Path, when set, replaces the channel URL's path (and drops its
 	// query); scheme and host stay the stored destination.
 	Path string
@@ -115,8 +124,30 @@ type Credentialed interface {
 	CheckSecret(name, value string) error
 }
 
+// SecretScoped is a Credentialed preset whose secrets belong to one of
+// its settings (Twilio's auth token to the account SID): when that
+// setting changes, a kept secret would belong to the old one, so the
+// secrets are required again. SecretScope names the setting and its value.
+type SecretScoped interface {
+	SecretScope(s PresetSettings) (name, value string)
+}
+
+// AlertStateAware is a preset whose rendering of an alert batch depends on
+// each alert's current state, read at send time into Target.Closed
+// (PagerDuty: a closed alert's incident is resolved, never re-opened, by a
+// message that arrives late).
+type AlertStateAware interface {
+	FollowsAlertState()
+}
+
+// AlertStates reads alerts' current state (internal/alerts, wired by
+// internal/app).
+type AlertStates interface {
+	// ClosedAlerts reports which of ids, alerts of orgID, are closed now;
+	// an id that names no alert of orgID (deleted with its host) counts as
+	// closed too.
+	ClosedAlerts(ctx context.Context, orgID uuid.UUID, ids []uuid.UUID) (map[uuid.UUID]bool, error)
+}
+
 // Presets maps a preset's stored name to its implementation.
 type Presets map[string]Preset
-
-// errNoRequests is a preset that rendered nothing to send.
-var errNoRequests = errors.New("the preset rendered no request")

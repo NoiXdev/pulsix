@@ -107,8 +107,8 @@ func sendOnce(t *testing.T, ps notify.Presets, c notify.Channel) error {
 
 // TestPresetSendSeveralRequests (backlog 4.8): every request a preset
 // renders is sent in order, to its own path, with its own content type
-// and headers winning over the operator's, each signed; one failing
-// request fails the send and names its place.
+// and headers winning over the operator's, each signed; a failing request
+// fails the send, names its place, and does not stop the others.
 func TestPresetSendSeveralRequests(t *testing.T) {
 	rec := &pathReceiver{}
 	srv := httptest.NewServer(rec)
@@ -140,11 +140,12 @@ func TestPresetSendSeveralRequests(t *testing.T) {
 
 	rec.fail = map[int]int{4: http.StatusBadRequest}
 	err = sendOnce(t, ps, c)
-	if !notify.IsPermanent(err) || !strings.Contains(err.Error(), "request 2 of 2") || strings.Contains(err.Error(), srv.URL) {
+	if !notify.IsPermanent(err) || !strings.Contains(err.Error(), "request 2: the endpoint answered 400") || strings.Contains(err.Error(), srv.URL) {
 		t.Fatalf("second failing = %v", err)
 	}
 	rec.fail = map[int]int{5: http.StatusServiceUnavailable}
-	if err := sendOnce(t, ps, c); err == nil || notify.IsPermanent(err) || len(rec.paths) != 5 {
+	// The first failing does not stop the second (review M1).
+	if err := sendOnce(t, ps, c); err == nil || notify.IsPermanent(err) || len(rec.paths) != 6 {
 		t.Fatalf("first failing = %v after %d requests", err, len(rec.paths))
 	}
 }
@@ -288,27 +289,62 @@ func (hugePreset) Render(notify.Event, notify.Target) ([]notify.Request, error) 
 	return []notify.Request{{Body: []byte(`{}`)}, {Body: make([]byte, 65<<10)}}, nil
 }
 
-// TestPresetSendRefusesWhatCannotBeSent: a preset that renders no
-// request, or one body over the cap, fails the delivery permanently and
-// sends nothing.
-func TestPresetSendRefusesWhatCannotBeSent(t *testing.T) {
+// TestPresetSendNothingOrTooMuch: a preset that renders no request has
+// nothing to say for the event and the delivery is done; one body over
+// the cap fails it permanently. Neither sends anything.
+func TestPresetSendNothingOrTooMuch(t *testing.T) {
 	rec := &pathReceiver{}
 	srv := httptest.NewServer(rec)
 	defer srv.Close()
 	w, _ := requestsWorld(t, srv.URL)
 	ps := notify.Presets{"empty": emptyPreset{}, "huge": hugePreset{}}
-	for _, name := range []string{"empty", "huge"} {
+	for name, permanent := range map[string]bool{"empty": false, "huge": true} {
 		in := presetInput(name, name, srv.URL+"/x/send", "")
 		w.svc = notify.NewService(notify.Deps{Channels: w.channels, Box: fakeBox{}, Mail: w.mail, Presets: ps, Rand: rand.Reader})
 		c, err := w.svc.CreateChannel(ctx, w.org, w.actor, in)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := sendOnce(t, ps, c); !notify.IsPermanent(err) {
+		if err := sendOnce(t, ps, c); notify.IsPermanent(err) != permanent || (!permanent && err != nil) {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
 	if len(rec.paths) != 0 {
 		t.Fatalf("sent %v", rec.paths)
+	}
+}
+
+// scopedPreset's secrets belong to its account setting.
+type scopedPreset struct{ credPreset }
+
+func (scopedPreset) SecretScope(s notify.PresetSettings) (string, string) {
+	return "account_sid", s.AccountSID
+}
+
+// TestPresetSecretsFollowTheirScope (review M2): changing the setting a
+// preset's secrets belong to needs them again; keeping it keeps them.
+func TestPresetSecretsFollowTheirScope(t *testing.T) {
+	w, _ := requestsWorld(t, "https://x.example.test")
+	ps := notify.Presets{"scoped": scopedPreset{}}
+	w.svc = notify.NewService(notify.Deps{Channels: w.channels, Box: fakeBox{}, Mail: w.mail, Presets: ps, Rand: rand.Reader})
+	in := credInput("s", "scoped", map[string]string{"token": "tok-AAAAAAAA", "user": "usr-BBBBBBBB"})
+	in.Webhook.AccountSID = "acct-1"
+	c, err := w.svc.CreateChannel(ctx, w.org, w.actor, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	same := credInput("s", "scoped", nil)
+	same.Webhook.AccountSID = "acct-1"
+	if c, err = w.svc.UpdateChannel(ctx, w.org, c.ID, c.Revision, same); err != nil {
+		t.Fatalf("same account = %v", err)
+	}
+	moved := credInput("s", "scoped", nil)
+	moved.Webhook.AccountSID = "acct-2"
+	if _, err := w.svc.UpdateChannel(ctx, w.org, c.ID, c.Revision, moved); !errors.Is(err, notify.ErrInvalidInput) || !strings.Contains(err.Error(), "changing account_sid needs the secret token again") {
+		t.Fatalf("moved without secrets = %v", err)
+	}
+	moved.Webhook.Secrets = map[string]string{"token": "tok-CCCCCCCC", "user": "usr-DDDDDDDD"}
+	if _, err := w.svc.UpdateChannel(ctx, w.org, c.ID, c.Revision, moved); err != nil {
+		t.Fatalf("moved with secrets = %v", err)
 	}
 }

@@ -14,8 +14,9 @@ import (
 
 // Queue tuning (spec §5): at most MaxAttempts claims per message, then
 // failed; a claim leases a row for leaseFor, far longer than one send can
-// take (the webhook timeout is 10 s, an e-mail conversation 30 s), so a
-// row is only claimed again when its manager died mid-send.
+// take (the webhook timeout is 10 s, an e-mail conversation 30 s, a
+// preset's several requests are bounded by half the lease), so a row is
+// only claimed again when its manager died mid-send.
 const (
 	MaxAttempts             = 6
 	DefaultDispatchInterval = 2 * time.Second
@@ -244,6 +245,12 @@ func stillOwed(err error) []string {
 	var partial *mail.PartialError
 	if errors.As(err, &partial) {
 		return partial.Failed
+	}
+	// A webhook preset's several requests (backlog 4.8): the keys of those
+	// still owed, carried in the same column.
+	var requests *PartialSendError
+	if errors.As(err, &requests) {
+		return requests.Pending
 	}
 	return nil
 }

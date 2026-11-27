@@ -39,8 +39,9 @@ type Delivery struct {
 	// PendingRecipients narrows an e-mail retry to the addresses the
 	// previous attempt did not reach. Empty means "the channel's own
 	// list" — what a first attempt and every pre-2.74 row mean. Only a
-	// retry after a partial failure sets it, and a webhook never does:
-	// one destination leaves nothing to narrow.
+	// retry after a partial failure sets it. For a webhook preset that
+	// sends several requests (backlog 4.8) it names the requests still
+	// owed by Request.Key instead; a single-request webhook never sets it.
 	PendingRecipients []string
 }
 

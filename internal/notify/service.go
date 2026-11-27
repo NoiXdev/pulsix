@@ -213,7 +213,8 @@ func (s *Service) buildWebhook(aad []byte, in WebhookInput, stored webhookConfig
 	if out.URLSealed, out.URLDisplay, err = s.webhookURL(aad, preset, in, out.PresetSettings, stored, update, curPreset); err != nil {
 		return out, false, err
 	}
-	if out.Secrets, err = s.presetSecrets(aad, preset, in.Secrets, stored.Secrets, update && in.Preset == curPreset); err != nil {
+	keep, rebound := secretsKept(preset, update && in.Preset == curPreset, stored.PresetSettings, out.PresetSettings)
+	if out.Secrets, err = s.presetSecrets(aad, preset, in.Secrets, stored.Secrets, keep, rebound); err != nil {
 		return out, false, err
 	}
 	if len(in.Headers) > maxHeaders {

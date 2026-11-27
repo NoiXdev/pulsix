@@ -57,23 +57,32 @@ type ChannelSender struct {
 	http    *http.Client
 	now     func() time.Time
 	presets Presets
+	// states reads alerts' current state for a preset that follows it
+	// (AlertStateAware); nil reads none.
+	states AlertStates
+	// budget bounds one delivery's requests, safely under the lease.
+	budget time.Duration
 }
 
 // NewChannelSender wires the sender. client must be an outbound client
 // (internal/outbound): it is the one that refuses internal destinations.
 // presets renders the body of a preset channel (presets.Registry); a
 // channel whose preset is missing from it fails permanently.
-func NewChannelSender(box Sealer, m Mailer, client *http.Client, now func() time.Time, presets Presets) *ChannelSender {
+func NewChannelSender(box Sealer, m Mailer, client *http.Client, now func() time.Time, presets Presets, opts ...SenderOption) *ChannelSender {
 	if now == nil {
 		now = time.Now
 	}
-	return &ChannelSender{box: box, mail: m, http: client, now: now, presets: presets}
+	s := &ChannelSender{box: box, mail: m, http: client, now: now, presets: presets, budget: defaultSendBudget}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
 }
 
 // Send delivers ev through ch. deliveryID travels as X-Pulsix-Delivery so
 // a receiver can drop the duplicate an at-least-once retry may produce.
 func (s *ChannelSender) Send(ctx context.Context, c Claimed, ev Event) error {
-	ch, deliveryID := c.Channel, c.Delivery.ID
+	ch := c.Channel
 	switch ch.Kind {
 	case KindEmail:
 		var cfg EmailConfig
@@ -93,7 +102,7 @@ func (s *ChannelSender) Send(ctx context.Context, c Claimed, ev Event) error {
 		if err != nil {
 			return Permanent(err)
 		}
-		return s.sendWebhook(ctx, w, deliveryID, ev)
+		return s.sendWebhook(ctx, w, c, ev)
 	}
 	return Permanent(fmt.Errorf("unknown channel kind %q", ch.Kind))
 }
@@ -165,27 +174,20 @@ func (s *ChannelSender) openWebhook(ch Channel) (openedWebhook, error) {
 	return out, nil
 }
 
-// sendWebhook posts the rendered requests in order: one for a raw
-// channel, as many as its preset renders otherwise (backlog 4.8). The
-// first failure fails the attempt; a retry sends every request again.
-func (s *ChannelSender) sendWebhook(ctx context.Context, w openedWebhook, deliveryID uuid.UUID, ev Event) error {
-	reqs, err := s.webhookRequests(w, ev)
+// sendWebhook renders and posts a webhook channel's requests: one for a
+// raw channel, as many as its preset renders otherwise (backlog 4.8). A
+// preset that follows alerts' state (AlertStateAware) reads it now, at
+// send time, so a retried message never revives an alert closed since.
+func (s *ChannelSender) sendWebhook(ctx context.Context, w openedWebhook, c Claimed, ev Event) error {
+	closed, err := s.closedAlerts(ctx, w, c.Channel.OrgID, ev)
+	if err != nil {
+		return fmt.Errorf("read the alerts' current state: %w", err)
+	}
+	reqs, err := s.webhookRequests(w, ev, closed)
 	if err != nil {
 		return Permanent(err)
 	}
-	for i, r := range reqs {
-		if err := s.sendRequest(ctx, w, r, deliveryID, ev); err != nil {
-			if len(reqs) == 1 {
-				return err
-			}
-			wrapped := fmt.Errorf("request %d of %d: %w", i+1, len(reqs), err)
-			if IsPermanent(err) {
-				return Permanent(wrapped)
-			}
-			return wrapped
-		}
-	}
-	return nil
+	return s.sendAll(ctx, w, reqs, c, ev)
 }
 
 // sendRequest posts one request. Operator headers are set first, so the
@@ -253,7 +255,7 @@ func (s *ChannelSender) sendRequest(ctx context.Context, w openedWebhook, r Requ
 // webhookRequests are the requests a webhook channel sends: its preset's
 // rendering (backlog 4.7, 4.8), else one request carrying the body
 // template or the event's JSON. Every body stays under maxBodyBytes.
-func (s *ChannelSender) webhookRequests(w openedWebhook, ev Event) ([]Request, error) {
+func (s *ChannelSender) webhookRequests(w openedWebhook, ev Event, closed map[uuid.UUID]bool) ([]Request, error) {
 	if w.preset == "" {
 		body, err := renderWebhookBody(w.bodyTemplate, ev)
 		if err != nil {
@@ -269,12 +271,9 @@ func (s *ChannelSender) webhookRequests(w openedWebhook, ev Event) ([]Request, e
 	if err != nil {
 		return nil, errors.New("the stored URL does not parse")
 	}
-	reqs, err := p.Render(ev, Target{Settings: w.settings, URL: u, Secrets: w.secrets})
+	reqs, err := p.Render(ev, Target{Settings: w.settings, URL: u, Secrets: w.secrets, Closed: closed})
 	if err != nil {
 		return nil, fmt.Errorf("render %s message: %w", w.preset, err)
-	}
-	if len(reqs) == 0 {
-		return nil, errNoRequests
 	}
 	for _, r := range reqs {
 		if len(r.Body) > maxBodyBytes {
