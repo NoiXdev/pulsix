@@ -123,10 +123,12 @@ func EnumRule(values []string, unicode bool) (Rule, error) {
 func (r Rule) check(v string, windows bool) (arg, reason string) {
 	switch r.kind {
 	case kindPattern:
+		// A program's own parsing may skip leading blanks.
+		lead := strings.TrimLeft(v, " \t")
 		switch {
-		case strings.HasPrefix(v, "-") && !r.allowDash:
+		case strings.HasPrefix(lead, "-") && !r.allowDash:
 			return "", reasonLeadingDash
-		case windows && strings.HasPrefix(v, "/") && !r.allowDash:
+		case windows && strings.HasPrefix(lead, "/") && !r.allowDash:
 			return "", reasonLeadingSlash
 		case !r.allowDotDot && hasDotDot(v):
 			return "", reasonDotDot
@@ -150,11 +152,14 @@ func (r Rule) check(v string, windows bool) (arg, reason string) {
 	return "", reasonNoRule
 }
 
-// hasDotDot reports a ".." segment of v split at '/' and '\\' (either
-// separator on every OS: a refusal too many on Unix costs nothing).
+// hasDotDot reports a segment of v, split at '/', '\\' and ':' (on every
+// OS: a refusal too many on Unix costs nothing), that consists of dots and
+// spaces only with at least two dots: "..", and the forms Windows trims to
+// it (".. ", "...") or reaches through a drive or stream (C:..\x,
+// ..:stream).
 func hasDotDot(v string) bool {
-	for _, seg := range strings.FieldsFunc(v, func(r rune) bool { return r == '/' || r == '\\' }) {
-		if seg == ".." {
+	for _, seg := range strings.FieldsFunc(v, func(r rune) bool { return r == '/' || r == '\\' || r == ':' }) {
+		if strings.Count(seg, ".") >= 2 && strings.Trim(seg, ". ") == "" {
 			return true
 		}
 	}

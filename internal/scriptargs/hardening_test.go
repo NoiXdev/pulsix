@@ -134,12 +134,14 @@ func TestBindLeadingSlashOnWindows(t *testing.T) {
 // separator, is refused unless the rule allows it.
 func TestBindDotDotSegments(t *testing.T) {
 	strict := oneArg(t, "/usr/bin/x", pattern(t, ".+", scriptargs.PatternOptions{}))
-	for _, v := range []string{"..", "../x", "/var/log/../../etc/shadow", "/var/..", `a\..\b`, `..\x`, `C:\a\..`, "a/../b"} {
+	for _, v := range []string{"..", "../x", "/var/log/../../etc/shadow", "/var/..", `a\..\b`, `..\x`, `C:\a\..`, "a/../b",
+		// Re-review N1: ':' separates too, and dots with spaces count.
+		".. ", "...", "a/.../b", ". .", `C:..\x`, "..:stream", "x:..", "/a/ ../b"} {
 		if err := bindErr(strict, v); err == nil || !strings.Contains(err.Error(), `argument "a" must not hold a ".." path segment`) {
 			t.Errorf("Bind(%q) = %v", v, err)
 		}
 	}
-	for _, v := range []string{"a..b", "...", "/var/log/x..y", "..a", "a/.../b", "."} {
+	for _, v := range []string{"a..b", "/var/log/x..y", "..a", ".", " . ", "a.b:c", "/x/.hidden"} {
 		if err := bindErr(strict, v); err != nil {
 			t.Errorf("Bind(%q) = %v", v, err)
 		}
@@ -168,5 +170,23 @@ func TestBindNamed(t *testing.T) {
 	argv, names, err = scriptargs.Fixed([]string{"/usr/bin/x", "{port}"}).BindNamed(nil)
 	if err != nil || !reflect.DeepEqual(names, []string{"", ""}) || argv[1] != "{port}" {
 		t.Fatalf("fixed BindNamed = %q, %q, %v", argv, names, err)
+	}
+}
+
+// TestBindLeadingDashAfterSpaces: the option check looks past leading
+// spaces, which a program's own parsing may skip (re-review N2).
+func TestBindLeadingDashAfterSpaces(t *testing.T) {
+	tmpl := oneArg(t, "/usr/bin/x", pattern(t, ".+", scriptargs.PatternOptions{}))
+	for _, v := range []string{" -x", "   --evil"} {
+		if err := bindErr(tmpl, v); err == nil || !strings.Contains(err.Error(), "must not start with '-'") {
+			t.Errorf("Bind(%q) = %v", v, err)
+		}
+	}
+	win := oneArg(t, `C:\tools\x.exe`, pattern(t, ".+", scriptargs.PatternOptions{}))
+	if err := bindErr(win, "  /delete"); err == nil || !strings.Contains(err.Error(), "must not start with '/'") {
+		t.Errorf("windows: Bind(  /delete) = %v", err)
+	}
+	if err := bindErr(tmpl, " a-b"); err != nil {
+		t.Errorf("Bind( a-b) = %v", err)
 	}
 }
