@@ -267,6 +267,14 @@ func (c *Controller) AwaitStart() { c.wg.Wait() }
 // settle is AwaitStart for tests.
 func (c *Controller) settle() { c.AwaitStart() }
 
+// Asked reports whether the last Apply asked for the page: a listen
+// address, or a refused section.
+func (c *Controller) Asked() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.want.Listen != "" || c.problem != ""
+}
+
 // Mode is what the page does now.
 func (c *Controller) Mode() Mode {
 	c.mu.Lock()

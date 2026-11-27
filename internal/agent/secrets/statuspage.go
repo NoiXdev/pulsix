@@ -62,10 +62,13 @@ var statusPageKeys = map[string]bool{"listen": true, "token": true, "tls_cert": 
 // Unlike the other sections, a mistake here never refuses the file: it
 // turns the page off and is returned as problem, "line N, column M:
 // <reason>", which never quotes what was written (R1 of the 3.132 plan).
-// A missing section or a missing listen is the page off, without a
-// problem.
+// A missing section, or a mapping without listen, is the page off without
+// a problem whatever else it holds; a section that is not a mapping is a
+// problem (R16).
 func parseStatusPage(n *yaml.Node) (page StatusPage, problem string) {
-	if n == nil || isNull(n) {
+	if n == nil || isNull(n) || (n.Kind == yaml.MappingNode && !hasListen(n)) {
+		// No listen address: the page is off, whatever else the section
+		// holds (fix round 1 of 3.132).
 		return StatusPage{}, ""
 	}
 	if err := checkNodes(n); err != nil {
@@ -129,6 +132,16 @@ func parseStatusPage(n *yaml.Node) (page StatusPage, problem string) {
 	return page, ""
 }
 
+// hasListen reports whether the mapping n sets listen to something.
+func hasListen(n *yaml.Node) bool {
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		if k := n.Content[i]; k.Kind == yaml.ScalarNode && k.Value == "listen" && !isNull(n.Content[i+1]) {
+			return true
+		}
+	}
+	return false
+}
+
 // parseListen checks a host:port and says whether it is a network
 // address. Loopback is localhost (rewritten as 127.0.0.1), 127.0.0.0/8 and
 // ::1; anything else — an empty host (every interface), another address,
@@ -146,7 +159,12 @@ func parseListen(s string) (listen string, network, ok bool) {
 		return net.JoinHostPort("127.0.0.1", port), false, true
 	}
 	if a, err := netip.ParseAddr(host); err == nil {
-		return net.JoinHostPort(a.String(), port), !a.Unmap().IsLoopback() || a.Zone() != "", true
+		if a.Is4In6() {
+			a = a.Unmap() // ::ffff:127.0.0.1 binds as 127.0.0.1
+		}
+		// A zoned address (::1%lo0) counts as network: the page then needs
+		// a token and HTTPS, which errs on the safe side.
+		return net.JoinHostPort(a.String(), port), !a.IsLoopback() || a.Zone() != "", true
 	}
 	return net.JoinHostPort(host, port), true, true
 }

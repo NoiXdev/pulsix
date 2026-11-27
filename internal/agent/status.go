@@ -162,9 +162,19 @@ func withStatusPageListen(fn func(ctx context.Context, network, addr string) (ne
 }
 
 // applyStatusPage hands the file's status_page section to the page's
-// controller. A refused or absent file has no section: the page is off.
-// localMu is held.
-func (l *Loop) applyStatusPage(set secrets.Set) {
+// controller. An absent file has no section: the page is off. A refused
+// file turns the page off too, reported as failed when the file last
+// applied asked for the page and as off when it did not (R15 of the
+// 3.132 plan). localMu is held.
+func (l *Loop) applyStatusPage(set secrets.Set, state secrets.State) {
+	if state != secrets.StateOK && state != secrets.StateAbsent {
+		problem := ""
+		if l.statusPage.Asked() {
+			problem = "the configuration file is refused"
+		}
+		l.statusPage.Apply(statuspage.Config{}, problem)
+		return
+	}
 	page, problem := set.StatusPage()
 	l.statusPage.Apply(statuspage.Config{
 		Listen: page.Listen, Token: page.Token, TLSCert: page.TLSCert, TLSKey: page.TLSKey, Network: page.Network,

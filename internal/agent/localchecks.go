@@ -89,7 +89,7 @@ func (l *Loop) lookAndApplyLocal() (secrets.Set, secrets.State) {
 	changed := !slices.Equal(shadowed, l.shadowed)
 	l.shadowed = shadowed
 	l.applyProbePolicy(set, state)
-	l.applyStatusPage(set)
+	l.applyStatusPage(set, state)
 	l.status.looked(set, state)
 	l.localMu.Unlock()
 	if changed && len(shadowed) > 0 {

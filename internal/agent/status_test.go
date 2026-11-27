@@ -221,3 +221,39 @@ func TestLoopUnresolvableListenDoesNotDelayTheHeartbeatPath(t *testing.T) {
 		t.Fatalf("three looks took %v", took)
 	}
 }
+
+// TestLoopRefusedFileReportsTheStatusPage: while agent.yaml is refused the
+// page is off; the heartbeat says failed when the last file the agent
+// applied asked for the page, off when it did not (review 3.132,
+// finding 9).
+func TestLoopRefusedFileReportsTheStatusPage(t *testing.T) {
+	for _, tc := range []struct {
+		name, first string
+		want        statuspage.Mode
+	}{
+		{"page was on", twoSecrets + "status_page:\n  listen: \"127.0.0.1:" + strconv.Itoa(freePort(t)) + "\"\n", statuspage.ModeFailed},
+		{"page was off", twoSecrets, statuspage.ModeOff},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lt := newLoopTest(t)
+			now := time.Date(2026, 11, 27, 10, 0, 0, 0, time.UTC)
+			lt.setNow(func() time.Time { return now })
+			writeSecretsFile(t, lt.cfg.SecretsPath, tc.first)
+			l := lt.newLoop()
+			t.Cleanup(l.statusPage.Close)
+			l.lookAndApplyLocal()
+			l.statusPage.AwaitStart()
+			writeSecretsFile(t, lt.cfg.SecretsPath, "secrets: [broken\n")
+			lt.setNow(func() time.Time { return now.Add(time.Minute) })
+			if _, state := l.lookAndApplyLocal(); state == "ok" {
+				t.Fatal("broken file accepted")
+			}
+			if got := l.statusPage.Mode(); got != tc.want {
+				t.Fatalf("mode = %v, want %v", got, tc.want)
+			}
+			if l.statusPage.Addr() != "" {
+				t.Fatal("the page still listens while the file is refused")
+			}
+		})
+	}
+}

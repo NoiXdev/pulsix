@@ -37,6 +37,11 @@ func TestParseStatusPage(t *testing.T) {
 		{"tls", "status_page:\n  listen: 10.0.0.5:8742\n  token: " + testStatusToken + "\n  tls_cert: /etc/c.pem\n  tls_key: /etc/k.pem\n",
 			StatusPage{Listen: "10.0.0.5:8742", Token: testStatusToken, TLSCert: "/etc/c.pem", TLSKey: "/etc/k.pem", Network: true}},
 		{"flow", "status_page: {listen: \"127.0.0.1:9000\"}\n", StatusPage{Listen: "127.0.0.1:9000"}},
+		{"mapped loopback", "status_page:\n  listen: \"[::ffff:127.0.0.1]:8742\"\n", StatusPage{Listen: "127.0.0.1:8742"}},
+		{"every v6 interface", "status_page:\n  listen: \"[::]:8742\"\n  token: " + testStatusToken + "\n",
+			StatusPage{Listen: "[::]:8742", Token: testStatusToken, Network: true}},
+		{"zoned loopback counts as network", "status_page:\n  listen: \"[::1%lo0]:8742\"\n  token: " + testStatusToken + "\n",
+			StatusPage{Listen: "[::1%lo0]:8742", Token: testStatusToken, Network: true}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -63,7 +68,7 @@ func TestParseStatusPageRules(t *testing.T) {
 	tests := []struct{ name, src, want string }{
 		{"not a mapping", "status_page: [x]\n", "line 1, column 14: " + badStatusPage},
 		{"scalar", "status_page: " + planted + "\n", "line 1, column 14: " + badStatusPage},
-		{"unknown key", "status_page:\n  " + planted + ": 1\n", "line 2, column 3: " + badStatusPageKey},
+		{"unknown key", "status_page:\n  listen: 127.0.0.1:1\n  " + planted + ": 1\n", "line 3, column 3: " + badStatusPageKey},
 		{"duplicate key", "status_page:\n  listen: 127.0.0.1:1\n  listen: 127.0.0.1:2\n", "line 3, column 3: listen is already set at line 2"},
 		{"list value", "status_page:\n  listen: [" + planted + "]\n", "line 2, column 11: " + badStatusPageValue},
 		{"no port", "status_page:\n  listen: " + planted + "\n", "line 2, column 11: " + badStatusListen},
@@ -73,7 +78,9 @@ func TestParseStatusPageRules(t *testing.T) {
 		{"network without token", "status_page:\n  listen: 0.0.0.0:8742\n", "line 2, column 11: " + badStatusNoToken},
 		{"every interface without token", "status_page:\n  listen: \":8742\"\n", "line 2, column 11: " + badStatusNoToken},
 		{"short token", "status_page:\n  listen: 127.0.0.1:8742\n  token: " + planted + "\n", "line 3, column 10: " + badStatusToken},
-		{"long token", "status_page:\n  token: " + strings.Repeat("x", maxStatusTokenLen+1) + "\n", "line 2, column 10: " + badStatusToken},
+		{"long token", "status_page:\n  listen: 127.0.0.1:1\n  token: " + strings.Repeat("x", maxStatusTokenLen+1) + "\n", "line 3, column 10: " + badStatusToken},
+		{"v6 every interface without token", "status_page:\n  listen: \"[::]:8742\"\n", "line 2, column 11: " + badStatusNoToken},
+		{"zoned loopback without token", "status_page:\n  listen: \"[::1%lo0]:8742\"\n", "line 2, column 11: " + badStatusNoToken},
 		{"cert without key", "status_page:\n  listen: 127.0.0.1:8742\n  tls_cert: /" + planted + "\n", "line 3, column 3: " + badStatusTLSPair},
 		{"key without cert", "status_page:\n  listen: 127.0.0.1:8742\n  tls_key: /" + planted + "\n", "line 3, column 3: " + badStatusTLSPair},
 		{"anchor inside", "status_page:\n  listen: &a 127.0.0.1:8742\n", "line 2, column 11: " + badAnchorReason},
@@ -171,5 +178,33 @@ func TestWatcherLogsStatusPageProblemOnce(t *testing.T) {
 	f.w.Current()
 	if n := strings.Count(f.log.String(), "refused the status_page settings"); n != 1 {
 		t.Fatalf("warned %d times:\n%s", n, f.log.String())
+	}
+}
+
+// TestParseStatusPageWithoutListenIsOff: a section without listen turns
+// the page off whatever else it holds — no problem, so the agent reports
+// off rather than failed (review 3.132, finding 9). A section that is not
+// a mapping is still a problem: it cannot be read as off.
+func TestParseStatusPageWithoutListenIsOff(t *testing.T) {
+	for _, src := range []string{
+		"status_page:\n  token: short\n",
+		"status_page:\n  tls_cert: /etc/c.pem\n",
+		"status_page:\n  unknown: 1\n  token: &a x\n",
+		"status_page:\n  listen:\n  token: short\n",
+	} {
+		set, err := parse([]byte(src))
+		if err != nil {
+			t.Fatalf("parse(%q) = %v", src, err)
+		}
+		if page, problem := set.StatusPage(); page.On() || problem != "" {
+			t.Errorf("parse(%q) = %+v, %q; want off without a problem", src, page, problem)
+		}
+	}
+	set, err := parse([]byte("status_page: 127.0.0.1:8742\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, problem := set.StatusPage(); problem == "" {
+		t.Fatal("a scalar section is not a problem")
 	}
 }
