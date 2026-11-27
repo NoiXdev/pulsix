@@ -81,12 +81,13 @@ import (
 const appRole = "pulsix_app"
 
 // lockSessions caps the pool the advisory lockers hold their sessions on
-// (backlog 3.92): one per locker — six today (re-test, item expiry,
-// retention purge, auth reaper, probe runner, backup) — plus headroom for
-// the next one. A locker that finds it full waits for a lock session, never for one
+// (backlog 3.92): one per locker — seven today (re-test, item expiry,
+// retention purge, auth reaper, invite reaper, probe runner, backup) — one
+// for the worker revocation watcher's LISTEN session (backlog 2.54), plus
+// headroom for the next one. A locker that finds it full waits for a lock session, never for one
 // the work it locks needs, so the cap bounds the connections the lockers
 // use and cannot deadlock them.
-const lockSessions = 8
+const lockSessions = 9
 
 // App is a fully wired manager: an http.Handler, the optional worker gRPC
 // server (nil unless cfg.GRPCListen was set), plus what main.go needs to
@@ -157,6 +158,10 @@ type App struct {
 	// stopEmbedded cancels the embedded worker's goroutine (nil unless
 	// cfg.EmbeddedWorker was set); Close calls it.
 	stopEmbedded func()
+	// stopRevocations stops the worker revocation watcher (backlog 2.54;
+	// nil without the worker endpoint), closing its LISTEN session before
+	// the lock pool closes.
+	stopRevocations func()
 	// backups runs scheduled and manual backups (backlog 7.2);
 	// stopBackupTicker stops its schedule. Close stops the ticker, then the
 	// service, which waits for a manual backup still running.
@@ -250,6 +255,9 @@ func (a *App) Close() {
 	}
 	if a.stopEmbedded != nil {
 		a.stopEmbedded()
+	}
+	if a.stopRevocations != nil {
+		a.stopRevocations()
 	}
 	if a.stopBackupTicker != nil {
 		a.stopBackupTicker()
@@ -1019,6 +1027,15 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		}
 	}
 
+	// A revocation served by another manager closes this one's streams of
+	// the worker too (backlog 2.54): the watcher listens for revocations on
+	// a session of the lock pool, which outlives every request. Only a
+	// manager with the worker endpoint holds worker streams.
+	var revocationsStop func()
+	if grpcServer != nil {
+		revocationsStop = startLoop(workers.NewRevocationWatcher(workers.NewSQLRevocationFeed(lockDB.Pool(), slog.Default()), streams, workers.WatchConfig{Log: slog.Default()}).Run)
+	}
+
 	// The backup schedule: one ticker per manager; the attempt row's claim
 	// on its slot makes several safe. An attempt still recorded as running
 	// while no backup holds the lock was left by a crash or a restore.
@@ -1029,7 +1046,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 
 	return &App{
 		Handler: handler, GRPC: grpcServer, GRPCListen: cfg.GRPCListen, db: appDB, locks: lockDB,
-		stopReaper: reaperStop, stopRetest: retestStop, stopItemExpiry: itemExpiryStop, stopRetentionPurge: retentionPurgeStop, stopAuthReaper: authReaperStop, stopInviteReaper: inviteReaperStop, stopTicker: tickerStop, stopSettle: settleStop, stopChain: chainStop, stopRunRequests: runRequestStop, stopDispatch: dispatchStop, stopDigest: digestStop, stopEval: evalStop, stopAlertNotify: alertNotifyStop, stopProbes: probesStop, stopEmbedded: stopEmbedded,
+		stopReaper: reaperStop, stopRetest: retestStop, stopItemExpiry: itemExpiryStop, stopRetentionPurge: retentionPurgeStop, stopAuthReaper: authReaperStop, stopInviteReaper: inviteReaperStop, stopTicker: tickerStop, stopSettle: settleStop, stopChain: chainStop, stopRunRequests: runRequestStop, stopDispatch: dispatchStop, stopDigest: digestStop, stopEval: evalStop, stopAlertNotify: alertNotifyStop, stopProbes: probesStop, stopEmbedded: stopEmbedded, stopRevocations: revocationsStop,
 		items: itemsSvc, backups: backupsSvc, stopBackupTicker: backupTickerStop, background: accountsSvc,
 	}, nil
 }

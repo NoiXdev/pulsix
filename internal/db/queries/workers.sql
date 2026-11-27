@@ -84,6 +84,20 @@ RETURNING *;
 UPDATE worker_certificates SET revoked_at = now()
 WHERE org_id = sqlc.arg(org_id) AND worker_id = sqlc.arg(worker_id) AND revoked_at IS NULL;
 
+-- name: NotifyWorkerRevoked :exec
+-- Tells every manager's revocation watcher (backlog 2.54) that the worker
+-- was revoked. Run inside the revocation's transaction: Postgres delivers
+-- the notification only when it commits. The channel name is
+-- workers.RevocationChannel.
+SELECT pg_notify('pulsix_worker_revoked', sqlc.arg(worker_id)::uuid::text);
+
+-- name: ListWorkersNotActive :many
+-- Of the given worker ids, those revoked or no longer present: the
+-- revocation watcher's rescan of the workers with open streams (backlog
+-- 2.54). Outside any org scope; workers carries no row-level security.
+SELECT ids.id::uuid AS id FROM unnest(sqlc.arg(ids)::uuid[]) AS ids(id)
+WHERE NOT EXISTS (SELECT 1 FROM workers w WHERE w.id = ids.id AND w.status = 'active');
+
 -- name: ListWorkerCertExpiries :many
 -- The latest expiry of each worker's unrevoked certificates (Workers page).
 SELECT worker_id, max(not_after)::timestamptz AS expires_at

@@ -3,6 +3,7 @@ package grpcsrv
 import (
 	"context"
 	"io"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -42,6 +43,120 @@ func TestStreamRegistry(t *testing.T) {
 	releaseA() // after close: a no-op
 	if n := r.CloseWorker(w); n != 0 {
 		t.Fatalf("second CloseWorker = %d", n)
+	}
+}
+
+// TestConcurrentCloseWorkerWaitsForTheAppendInFlight (backlog 2.54 review
+// I1): the serving manager's own revocation watcher can call CloseWorker
+// while Service.Revoke's CloseWorker is still to come. Whichever call comes
+// second must not return early with 0: both report the stream and both
+// return only once the append in flight has finished, so the requeue that
+// follows Revoke's call never races a stray event. The handler releases
+// its stream as soon as revoked closes, long before the append ends; the
+// stream must stay registered until it is shut all the same.
+func TestConcurrentCloseWorkerWaitsForTheAppendInFlight(t *testing.T) {
+	r := NewStreamRegistry()
+	w := uuid.Must(uuid.NewV7())
+	ts, release := r.track(w)
+	appending, finish := make(chan struct{}), make(chan struct{})
+	appended := make(chan error, 1)
+	go func() {
+		appended <- ts.store(func() error { close(appending); <-finish; return nil })
+	}()
+	<-appending
+
+	type result struct{ n int }
+	first, second := make(chan result, 1), make(chan result, 1)
+	go func() { first <- result{r.CloseWorker(w)} }()  // the watcher
+	<-ts.revoked                                       // the first close is under way
+	release()                                          // as the handler does once revoked closes (events.go)
+	go func() { second <- result{r.CloseWorker(w)} }() // Service.Revoke's own
+	select {
+	case res := <-second:
+		t.Fatalf("the second CloseWorker returned %d while an append was in flight", res.n)
+	case res := <-first:
+		t.Fatalf("the first CloseWorker returned %d while an append was in flight", res.n)
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(finish)
+	if err := <-appended; err != nil {
+		t.Fatal(err)
+	}
+	for name, c := range map[string]chan result{"first": first, "second": second} {
+		select {
+		case res := <-c:
+			if res.n != 1 {
+				t.Fatalf("%s CloseWorker = %d, want the one stream", name, res.n)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s CloseWorker never returned", name)
+		}
+	}
+	if err := ts.store(func() error { t.Fatal("an append ran after the cut"); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.Workers(); len(got) != 0 {
+		t.Fatalf("Workers after the cut = %v", got)
+	}
+}
+
+// TestReleasedClosingStreamIsRemovedByItsCloser: a stream the handler
+// released while CloseWorker was still shutting it stays registered only
+// until that CloseWorker returns, then it is gone; a stream of the same
+// worker tracked meanwhile is neither shut nor removed.
+func TestReleasedClosingStreamIsRemovedByItsCloser(t *testing.T) {
+	r := NewStreamRegistry()
+	w := uuid.Must(uuid.NewV7())
+	ts, release := r.track(w)
+	appending, finish := make(chan struct{}), make(chan struct{})
+	go func() { _ = ts.store(func() error { close(appending); <-finish; return nil }) }()
+	<-appending
+	closed := make(chan int, 1)
+	go func() { closed <- r.CloseWorker(w) }()
+	<-ts.revoked
+	release()
+	if got := r.Workers(); len(got) != 1 {
+		t.Fatalf("Workers while the append runs = %v, want the closing stream kept", got)
+	}
+	later, releaseLater := r.track(w)
+	close(finish)
+	if n := <-closed; n != 1 {
+		t.Fatalf("CloseWorker = %d, want 1", n)
+	}
+	select {
+	case <-later.revoked:
+		t.Fatal("a stream tracked after the snapshot was shut")
+	default:
+	}
+	if got := r.Workers(); len(got) != 1 || got[0] != w {
+		t.Fatalf("Workers = %v, want only the later stream's worker", got)
+	}
+	releaseLater()
+	if got := r.Workers(); len(got) != 0 {
+		t.Fatalf("Workers after every release = %v, want none (a leak)", got)
+	}
+}
+
+// TestStreamRegistryWorkers: Workers lists each worker with an open stream
+// once; a released or closed worker drops out.
+func TestStreamRegistryWorkers(t *testing.T) {
+	r := NewStreamRegistry()
+	if got := r.Workers(); len(got) != 0 {
+		t.Fatalf("Workers of an empty registry = %v", got)
+	}
+	a, b, c := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	r.track(a)
+	r.track(a)
+	r.track(b)
+	_, releaseC := r.track(c)
+	releaseC()
+	got := r.Workers()
+	if len(got) != 2 || !slices.Contains(got, a) || !slices.Contains(got, b) {
+		t.Fatalf("Workers = %v, want %s and %s once each", got, a, b)
+	}
+	r.CloseWorker(a)
+	if got := r.Workers(); len(got) != 1 || got[0] != b {
+		t.Fatalf("Workers after closing %s = %v, want only %s", a, got, b)
 	}
 }
 
