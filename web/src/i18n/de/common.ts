@@ -15,5 +15,6 @@ export const deCommon: Messages['common'] = {
   delete: 'Löschen',
   edit: 'Bearbeiten',
   loading: 'Wird geladen…',
+  dash: ' – ',
   never: 'nie',
 };

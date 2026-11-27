@@ -96,3 +96,10 @@ describe('count messages for a count of one', () => {
     expect(out.slice(expected.length)).not.toMatch(/^\p{L}/u);
   });
 });
+
+describe('the dash that joins copy (backlog 1.42)', () => {
+  it('is the spaced em dash in English and the spaced en dash in German', () => {
+    expect(en.common.dash).toBe(' — ');
+    expect(de.common.dash).toBe(' – ');
+  });
+});
