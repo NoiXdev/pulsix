@@ -167,3 +167,90 @@ starts (docs/upgrades.md).
 
 Telegram forum topics (`message_thread_id`), Slack threads, per-route mentions, message editing
 on resolve, and the 4.8 services.
+
+## Addendum: backlog 4.8 — ntfy, Pushover, Twilio SMS, PagerDuty
+
+Date: 2026-11-27. Everything here is **[derived]** by the 4.8 implementer while the owner was
+away, from the owner decisions above ("each of 4.8's services is one renderer plus validation")
+and recorded again as rulings in `docs/superpowers/plans/2026-11-26-webhook-presets-4.8.md`.
+4.8 adds four presets, not four `notify.Kind`s; the backlog row's older wording is updated.
+
+### What the preset interface gains
+
+Two of the four services do not fit "one JSON body to the channel URL": Twilio takes a
+form-encoded body with basic auth, PagerDuty takes one event per alert, ntfy's JSON publish goes
+to the server root. So `Render` returns requests instead of bytes:
+
+- `Render(ev Event, t Target) ([]Request, error)`. `Target` is what a send opened: the stored
+  `PresetSettings`, the opened channel URL and the opened preset secrets — held for one send only.
+- `Request{Path, ContentType, Header, Body}`: `Path` replaces the channel URL's path when set
+  (same scheme and host, so the outbound policy and the stored destination still decide where a
+  request goes); `ContentType` defaults to `application/json`; `Header` is set after the operator's
+  headers (the preset's own `Authorization` wins); X-Pulsix headers and signing apply to every
+  request. A delivery is sent when every request succeeded; the first failure fails the attempt
+  and a retry sends every request again (PagerDuty's `dedup_key` makes that idempotent; the
+  others render one request).
+- Two optional interfaces: `Endpointed` (`Endpoint(PresetSettings) string`) — Pulsix builds the
+  URL from the settings, the operator submits none; `Credentialed` (`SecretNames() []string`,
+  `CheckSecret(name, value string) error`) — secrets beyond the URL and headers.
+
+The three 4.7 presets render one JSON request each and are otherwise unchanged.
+
+### Storage
+
+- Migration `00137` widens `notification_channels_preset_check` to add `ntfy`, `pushover`,
+  `twilio`, `pagerduty` (drop and re-add; every stored row passes).
+- New clear settings in the webhook config JSON, like `chat_id`: `account_sid`, `from`, `to`
+  (Twilio), `region` (PagerDuty, `us` or `eu`).
+- New sealed secrets in the webhook config JSON: `secrets: [{name, value_sealed}]`, sealed with
+  the channel's AAD exactly like header values; never returned (the read shows their names), never
+  logged, never echoed in an error; a backup carries them sealed, like every other channel secret.
+  On update an omitted secret keeps its stored value while the preset stays the same; rotation is
+  entering a new value. Changing the preset drops the old preset's secrets.
+
+### Per service
+
+| | URL | Settings | Secrets | Body |
+|---|---|---|---|---|
+| ntfy | the topic URL, any host (self-hosted servers), last path segment a topic `[-_A-Za-z0-9]{1,64}`, no query; the error never repeats it | — | — (an access token is an operator `Authorization: Bearer …` header, sealed) | JSON publish to the server root: `topic`, `title`, `message` (plain, ≤ 4096 bytes), `priority` (crit 5, warn 4, unknown and info 3, ok 2), `tags` (a level emoji shortcode), `click` = link |
+| Pushover | built: `https://api.pushover.net/1/messages.json` | — | `token`, `user` (30 letters/digits each) | form: `token`, `user`, `title` (≤ 250), `message` (plain, ≤ 1024 characters), `priority` (crit 1, warn and unknown 0, ok and info −1; never 2), `url` (≤ 512) + `url_title`, `timestamp` |
+| Twilio SMS | built: `https://api.twilio.com/2010-04-01/Accounts/<SID>/Messages.json` | `account_sid` (`AC` + 32 hex), `from` (E.164 or an alphanumeric sender ID), `to` (one E.164 number) | `auth_token` (32 letters/digits), sent as basic auth with the SID | form: `From`, `To`, `Body` — plain text folded to the GSM-7 alphabet where a look-alike has one, at most two SMS segments (306 GSM-7 septets, else 134 UTF-16 units) |
+| PagerDuty | built: `https://events.pagerduty.com/v2/enqueue`, or `events.eu.pagerduty.com` for `region: eu` | `region` | `routing_key` (32 letters/digits) | see below |
+
+PagerDuty (Events API v2): an alert batch sends one event per alert it carries (at most 50, the
+batch's own cap), `dedup_key` `pulsix:alert:<alert id>`: `closed` resolves, `acknowledged` and
+`snoozed` acknowledge, every other alert event triggers with `severity` crit → critical,
+warn and unknown → warning. A failed or cancelled run triggers (`error`, key `pulsix:run:<run id>`),
+a schedule that could not start triggers (`error`) and a skipped one too (`warning`), keyed by
+schedule and due time; a succeeded run, the digest and Send test are **change events**
+(`/v2/change/enqueue`), which show on the service's timeline and page nobody. A trigger carries
+`summary` (≤ 1024), `source` (the host, else the organization), `component` (check), `class`
+(metric), `group` (organization), `timestamp`, `custom_details.lines` and a link to Pulsix.
+
+Every renderer starts from `Compose` (or, per alert, `Compose` of a one-item batch), so the
+7.42 defusing applies; the SMS fold turns its look-alikes back into the GSM-7 characters, since
+SMS has no markup. The 40 KiB byte budget applies to every request body.
+
+### API, GUI
+
+- Read (`webhook`): `account_sid`, `from`, `to`, `region`, `secrets` (names only). Create and
+  update: the same settings and `secrets` as an object of name → value; the `url` must be left
+  out for Pushover, Twilio and PagerDuty.
+- The Format select gains the four. Pushover, Twilio and PagerDuty hide the URL field and show
+  their own fields (secrets as password fields that keep the stored value when left empty);
+  ntfy keeps the URL and hints at the Authorization header. Twilio's dialog says every message is
+  a billed SMS, and Send test on a Twilio channel asks for confirmation first.
+
+### Version skew
+
+As in 4.7: an older manager sends a new preset channel as the raw event JSON to the stored URL
+(the service refuses it) — stop every manager before the new version starts.
+
+### Out of scope (4.8)
+
+Splitting e-mail and the raw webhook out of `internal/notify` (the backlog row's 2026-11-12
+note): its motivation was a package per new channel, which the presets now are; moving the two
+existing kinds drags the shared config, sealing and sending along with no new caller. Pushover
+emergency priority, devices and sounds; Twilio messaging services, API keys and several
+recipients per channel (one channel per number); a PagerDuty event for the alerts a capped batch
+leaves out; ntfy attachments, actions and Markdown.
