@@ -1,6 +1,7 @@
 package statuspage
 
 import (
+	"context"
 	"crypto/tls"
 	"io"
 	"log"
@@ -45,34 +46,56 @@ type Config struct {
 	Network                        bool
 }
 
+// Start limits (review 3.132, finding 4): a start runs off the caller's
+// path, bounded to startTimeout (a name that does not resolve), and a
+// failed one is tried again at most once per retryEvery.
+const (
+	startTimeout = time.Second
+	retryEvery   = time.Minute
+)
+
 // Options are the controller's dependencies.
 type Options struct {
 	// DataDir is where a network page's self-signed certificate is kept.
 	DataDir string
-	// Redact replaces secret values in everything the page shows.
+	// Redact replaces secret values in the local checks' params the page
+	// shows.
 	Redact func(string) string
 	Log    *slog.Logger
 	Now    func() time.Time
 	// Hostname is the machine's name for the self-signed certificate;
 	// nil is os.Hostname.
 	Hostname func() (string, error)
+	// Listen opens the listener; nil is net.ListenConfig.Listen. Tests
+	// inject one that never answers.
+	Listen func(ctx context.Context, network, addr string) (net.Listener, error)
 }
 
 // Controller owns the page's listener: Apply starts, moves or stops it
-// to follow agent.yaml, Close stops it for good. It is safe for
-// concurrent use.
+// to follow agent.yaml, Close stops it for good. Starting happens on a
+// goroutine of its own, so Apply never waits on a listener or a name
+// lookup; Mode reports what is served. It is safe for concurrent use.
 type Controller struct {
 	src  Source
 	opts Options
+	wg   sync.WaitGroup // start attempts in flight
 
 	mu      sync.Mutex
 	closed  bool
-	cur     Config
+	want    Config
 	problem string
-	srv     *http.Server
-	ln      net.Listener
-	mode    Mode
-	lastErr string
+	// gen counts changes of what should be served; an attempt started for
+	// an older gen closes what it opened.
+	gen        int
+	attempting bool // an attempt for gen is in flight
+	lastTry    time.Time
+	srv        *http.Server
+	ln         net.Listener
+	// certUntil is the self-signed certificate's end, zero when the page
+	// serves none.
+	certUntil time.Time
+	mode      Mode
+	lastErr   string
 }
 
 // NewController wires a controller; the page is off until Apply.
@@ -86,83 +109,128 @@ func NewController(src Source, opts Options) *Controller {
 	if opts.Hostname == nil {
 		opts.Hostname = os.Hostname
 	}
+	if opts.Listen == nil {
+		var lc net.ListenConfig
+		opts.Listen = lc.Listen
+	}
 	return &Controller{src: src, opts: opts}
 }
 
-// Apply makes the page follow cfg: off when cfg has no listen address or
-// problem is set (the section was refused; the watcher logged why), on
-// the new address when cfg changed, left alone when it did not. A page
-// that failed to start is tried again on every Apply, and its failure is
-// logged once per change.
+// Apply makes the page follow cfg: off when cfg has no listen address,
+// failed when problem is set (the section was refused; the watcher logged
+// why), started on the new address when cfg changed, left alone when it
+// did not. A page that failed to start is tried again at most once a
+// minute, and its failure is logged once per change. A self-signed
+// certificate near its end is replaced. Apply never waits for a start.
 func (c *Controller) Apply(cfg Config, problem string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
 		return
 	}
-	if problem != "" {
-		c.stopLocked()
-		c.cur, c.problem, c.mode, c.lastErr = Config{}, problem, ModeFailed, ""
-		return
-	}
-	if cfg.Listen == "" {
+	now := c.opts.Now()
+	switch {
+	case problem != "":
+		c.resetLocked(ModeFailed, problem)
+	case cfg.Listen == "":
 		if c.srv != nil || c.mode != ModeOff {
 			c.opts.Log.Info("the status page is off")
 		}
-		c.stopLocked()
-		c.cur, c.problem, c.mode, c.lastErr = Config{}, "", ModeOff, ""
-		return
-	}
-	if cfg == c.cur && c.problem == "" && c.srv != nil {
-		return
-	}
-	c.stopLocked()
-	c.cur, c.problem = cfg, ""
-	if err := c.startLocked(cfg); err != nil {
-		c.mode = ModeFailed
-		if msg := err.Error(); msg != c.lastErr {
-			c.lastErr = msg
-			c.opts.Log.Warn("the status page could not start; it is tried again with the next look at agent.yaml",
-				"network", cfg.Network, "err", err)
+		c.resetLocked(ModeOff, "")
+	case cfg != c.want || c.problem != "":
+		c.resetLocked(ModeOff, "")
+		c.want = cfg
+		c.startLocked(now)
+	case c.srv != nil:
+		if !c.certUntil.IsZero() && c.certUntil.Sub(now) <= selfSignedRenew {
+			c.resetLocked(ModeOff, "")
+			c.want = cfg
+			c.startLocked(now)
 		}
-		return
+	case !c.attempting && now.Sub(c.lastTry) >= retryEvery:
+		c.startLocked(now)
 	}
-	c.lastErr = ""
-	c.mode = ModeLoopback
-	if cfg.Network {
-		c.mode = ModeNetwork
-	}
-	c.opts.Log.Info("the status page is on", "addr", c.ln.Addr().String(), "network", cfg.Network,
-		"https", cfg.Network || cfg.TLSCert != "", "token", cfg.Token != "")
 }
 
-// startLocked opens the listener and serves the page on it; c.mu is held.
-func (c *Controller) startLocked(cfg Config) error {
+// resetLocked stops what is served and forgets what should be; c.mu is
+// held.
+func (c *Controller) resetLocked(mode Mode, problem string) {
+	c.stopLocked()
+	c.gen++
+	c.want, c.problem, c.mode, c.attempting = Config{}, problem, mode, false
+	if mode == ModeOff || problem != "" {
+		c.lastErr = ""
+	}
+}
+
+// startLocked starts an attempt to serve c.want; c.mu is held.
+func (c *Controller) startLocked(now time.Time) {
+	gen, cfg := c.gen, c.want
+	c.attempting, c.lastTry = true, now
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		ln, until, err := c.open(cfg, now)
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if c.closed || gen != c.gen {
+			if ln != nil {
+				_ = ln.Close()
+			}
+			return
+		}
+		c.attempting = false
+		if err != nil {
+			c.mode = ModeFailed
+			if msg := err.Error(); msg != c.lastErr {
+				c.lastErr = msg
+				c.opts.Log.Warn("the status page could not start; it is tried again at most once a minute",
+					"network", cfg.Network, "err", err)
+			}
+			return
+		}
+		c.serveLocked(cfg, ln, until)
+	}()
+}
+
+// open builds the TLS settings and opens the listener, bounded to
+// startTimeout; until is the self-signed certificate's end, zero for none.
+func (c *Controller) open(cfg Config, now time.Time) (ln net.Listener, until time.Time, err error) {
 	var tlsCfg *tls.Config
 	switch {
 	case cfg.TLSCert != "":
 		cert, err := loadGiven(cfg.TLSCert, cfg.TLSKey)
 		if err != nil {
-			return err
+			return nil, time.Time{}, err
 		}
 		tlsCfg = &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
 	case cfg.Network:
 		host, _, _ := net.SplitHostPort(cfg.Listen)
 		hostname, _ := c.opts.Hostname()
-		cert, err := selfSigned(c.opts.DataDir, host, hostname, c.opts.Now())
+		cert, err := selfSigned(c.opts.DataDir, host, hostname, now)
 		if err != nil {
-			return err
+			return nil, time.Time{}, err
+		}
+		if cert.Leaf != nil {
+			until = cert.Leaf.NotAfter
 		}
 		tlsCfg = &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
 	}
-	ln, err := net.Listen("tcp", cfg.Listen)
+	ctx, cancel := context.WithTimeout(context.Background(), startTimeout)
+	defer cancel()
+	ln, err = c.opts.Listen(ctx, "tcp", cfg.Listen)
 	if err != nil {
-		return err
+		return nil, time.Time{}, err
 	}
 	ln = netutil.LimitListener(ln, maxConns)
 	if tlsCfg != nil {
 		ln = tls.NewListener(ln, tlsCfg)
 	}
+	return ln, until, nil
+}
+
+// serveLocked serves the page on ln; c.mu is held.
+func (c *Controller) serveLocked(cfg Config, ln net.Listener, until time.Time) {
 	srv := &http.Server{
 		Handler:           newHandler(c.src, cfg.Token, c.opts.Redact, c.opts.Now, c.opts.Log),
 		ReadHeaderTimeout: readHeaderTimeout,
@@ -173,18 +241,31 @@ func (c *Controller) startLocked(cfg Config) error {
 		// TLS handshake noise from scanners would flood the agent's log.
 		ErrorLog: log.New(io.Discard, "", 0),
 	}
-	c.srv, c.ln = srv, ln
+	c.srv, c.ln, c.certUntil, c.lastErr = srv, ln, until, ""
+	c.mode = ModeLoopback
+	if cfg.Network {
+		c.mode = ModeNetwork
+	}
 	go func() { _ = srv.Serve(ln) }()
-	return nil
+	c.opts.Log.Info("the status page is on", "addr", ln.Addr().String(), "network", cfg.Network,
+		"https", cfg.Network || cfg.TLSCert != "", "token", cfg.Token != "")
 }
 
 // stopLocked closes the server, if any; c.mu is held.
 func (c *Controller) stopLocked() {
 	if c.srv != nil {
 		_ = c.srv.Close()
-		c.srv, c.ln = nil, nil
+		c.srv, c.ln, c.certUntil = nil, nil, time.Time{}
 	}
 }
+
+// AwaitStart waits for the start attempts in flight, each bounded to about
+// startTimeout plus a certificate: the agent calls it once at start, so
+// its first heartbeat reports what is served.
+func (c *Controller) AwaitStart() { c.wg.Wait() }
+
+// settle is AwaitStart for tests.
+func (c *Controller) settle() { c.AwaitStart() }
 
 // Mode is what the page does now.
 func (c *Controller) Mode() Mode {
@@ -203,10 +284,13 @@ func (c *Controller) Addr() string {
 	return c.ln.Addr().String()
 }
 
-// Close stops the page for good; a later Apply does nothing.
+// Close stops the page for good and waits for a start in flight (at most
+// about startTimeout); a later Apply does nothing.
 func (c *Controller) Close() {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.stopLocked()
+	c.gen++
 	c.closed, c.mode = true, ModeOff
+	c.mu.Unlock()
+	c.wg.Wait()
 }

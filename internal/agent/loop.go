@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"net"
 	"os"
 	"sync"
 	"time"
@@ -197,6 +198,9 @@ type Loop struct {
 	// it when agent.yaml turns the page on (status.go).
 	status     *statusRecorder
 	statusPage *statuspage.Controller
+	// statusPageListen is a test seam: how the page opens its listener
+	// (nil: the default).
+	statusPageListen func(ctx context.Context, network, addr string) (net.Listener, error)
 }
 
 // LoopOption overrides injected dependencies for tests.
@@ -309,6 +313,9 @@ func (l *Loop) Run(ctx context.Context) error {
 	// when Run returns.
 	l.lookAndApplyLocal()
 	defer l.statusPage.Close()
+	// The page starts off this path; waiting for it once here (about a
+	// second at most) lets the first heartbeat report what is served.
+	l.statusPage.AwaitStart()
 	if !id.Valid(l.now()) {
 		// why says WHICH of the two unusable cases this is (backlog
 		// 2.103). Both re-enrol, so the agent behaves the same either

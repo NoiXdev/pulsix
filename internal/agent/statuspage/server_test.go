@@ -2,6 +2,7 @@ package statuspage
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"io"
@@ -55,6 +56,7 @@ func noRedirect() *http.Client {
 func TestControllerServesLoopbackPlainHTTP(t *testing.T) {
 	c, _ := newTestController(t, nil)
 	c.Apply(Config{Listen: "127.0.0.1:0"}, "")
+	c.settle()
 	if c.Mode() != ModeLoopback || c.Addr() == "" {
 		t.Fatalf("mode %v addr %q", c.Mode(), c.Addr())
 	}
@@ -68,6 +70,7 @@ func TestControllerServesNetworkOverTLSOnly(t *testing.T) {
 	c, dir := newTestController(t, nil)
 	// A network page on a loopback port, so the test dials nothing else.
 	c.Apply(Config{Listen: "127.0.0.1:0", Token: testToken, Network: true}, "")
+	c.settle()
 	if c.Mode() != ModeNetwork {
 		t.Fatalf("mode = %v", c.Mode())
 	}
@@ -112,6 +115,7 @@ func TestControllerUsesGivenCertificate(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.Apply(Config{Listen: "127.0.0.1:0", TLSCert: filepath.Join(other, selfSignedCert), TLSKey: filepath.Join(other, selfSignedKey)}, "")
+	c.settle()
 	if c.Mode() != ModeLoopback {
 		t.Fatalf("mode = %v", c.Mode())
 	}
@@ -126,6 +130,7 @@ func TestControllerUsesGivenCertificate(t *testing.T) {
 	var logs bytes.Buffer
 	c2, _ := newTestController(t, &logs)
 	c2.Apply(Config{Listen: "127.0.0.1:0", TLSCert: filepath.Join(other, "missing.crt"), TLSKey: filepath.Join(other, "missing.key")}, "")
+	c2.settle()
 	if c2.Mode() != ModeFailed || c2.Addr() != "" || !strings.Contains(logs.String(), "could not start") {
 		t.Fatalf("mode %v addr %q logs %s", c2.Mode(), c2.Addr(), logs.String())
 	}
@@ -137,14 +142,17 @@ func TestControllerFollowsConfigChange(t *testing.T) {
 		t.Fatalf("a new controller is %v", c.Mode())
 	}
 	c.Apply(Config{Listen: "127.0.0.1:0"}, "")
+	c.settle()
 	first := c.Addr()
 	// The same settings leave the listener alone.
 	c.Apply(Config{Listen: "127.0.0.1:0"}, "")
+	c.settle()
 	if c.Addr() != first {
 		t.Fatalf("an unchanged Apply moved the page: %s -> %s", first, c.Addr())
 	}
 	// A changed one moves it, and the old address stops answering.
 	c.Apply(Config{Listen: "127.0.0.1:0", Token: testToken}, "")
+	c.settle()
 	if c.Addr() == "" || c.Addr() == first {
 		t.Fatalf("changed settings did not move the page: %q", c.Addr())
 	}
@@ -154,33 +162,43 @@ func TestControllerFollowsConfigChange(t *testing.T) {
 	}
 	// A refused section turns it off as failed.
 	c.Apply(Config{}, "line 3, column 5: whatever")
+	c.settle()
 	if c.Mode() != ModeFailed || c.Addr() != "" {
 		t.Fatalf("refused: mode %v addr %q", c.Mode(), c.Addr())
 	}
 	// No listen: off.
 	c.Apply(Config{Listen: "127.0.0.1:0"}, "")
+	c.settle()
 	c.Apply(Config{}, "")
+	c.settle()
 	if c.Mode() != ModeOff || c.Addr() != "" {
 		t.Fatalf("off: mode %v addr %q", c.Mode(), c.Addr())
 	}
 	// Closed: Apply does nothing.
 	c.Close()
 	c.Apply(Config{Listen: "127.0.0.1:0"}, "")
+	c.settle()
 	if c.Mode() != ModeOff || c.Addr() != "" {
 		t.Fatal("Apply after Close started the page")
 	}
 }
 
-func TestControllerBindFailureIsRetriedAndLoggedOnce(t *testing.T) {
+func TestControllerBindFailureIsRetriedOnceAMinuteAndLoggedOnce(t *testing.T) {
 	taken, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	addr := taken.Addr().String()
 	var logs bytes.Buffer
-	c, _ := newTestController(t, &logs)
+	clock := &fakeClock{now: t0}
+	c := NewController(&fakeSource{snap: fullSnapshot()}, Options{
+		DataDir: t.TempDir(), Log: slog.New(slog.NewTextHandler(&logs, nil)), Now: clock.Now,
+	})
+	t.Cleanup(c.Close)
 	for range 3 {
 		c.Apply(Config{Listen: addr}, "")
+		c.settle()
+		clock.advance(time.Minute)
 	}
 	if c.Mode() != ModeFailed {
 		t.Fatalf("mode = %v", c.Mode())
@@ -189,9 +207,78 @@ func TestControllerBindFailureIsRetriedAndLoggedOnce(t *testing.T) {
 		t.Fatalf("logged %d times", n)
 	}
 	_ = taken.Close()
+	// Within the minute of the last attempt: not tried again.
+	clock.advance(-30 * time.Second)
 	c.Apply(Config{Listen: addr}, "")
+	c.settle()
+	if c.Mode() != ModeFailed {
+		t.Fatalf("retried within the minute: %v", c.Mode())
+	}
+	clock.advance(30 * time.Second)
+	c.Apply(Config{Listen: addr}, "")
+	c.settle()
 	if c.Mode() != ModeLoopback || c.Addr() != addr {
 		t.Fatalf("after the port freed: mode %v addr %q", c.Mode(), c.Addr())
+	}
+}
+
+// TestControllerStartsAsynchronously: Apply never waits for the listener —
+// a name that never resolves must not hold up the heartbeat — and an
+// attempt is bounded to about a second (review 3.132, finding 4).
+func TestControllerStartsAsynchronously(t *testing.T) {
+	var deadline time.Duration
+	c := NewController(&fakeSource{}, Options{
+		DataDir: t.TempDir(),
+		Listen: func(ctx context.Context, _, _ string) (net.Listener, error) {
+			d, _ := ctx.Deadline()
+			deadline = time.Until(d)
+			<-ctx.Done() // a resolver that never answers
+			return nil, ctx.Err()
+		},
+	})
+	t.Cleanup(c.Close)
+	start := time.Now()
+	c.Apply(Config{Listen: "never-resolves.test:8742", Token: testToken, Network: true}, "")
+	c.Apply(Config{Listen: "never-resolves.test:8742", Token: testToken, Network: true}, "")
+	if took := time.Since(start); took > 200*time.Millisecond {
+		t.Fatalf("Apply took %v", took)
+	}
+	c.settle()
+	if deadline <= 0 || deadline > 2*time.Second {
+		t.Fatalf("listen deadline = %v", deadline)
+	}
+	if c.Mode() != ModeFailed {
+		t.Fatalf("mode = %v", c.Mode())
+	}
+}
+
+// TestControllerRenewsTheSelfSignedCertificate: a page that runs on without
+// a config change gets a new certificate before the old one runs out
+// (review 3.132, finding 7).
+func TestControllerRenewsTheSelfSignedCertificate(t *testing.T) {
+	clock := &fakeClock{now: t0}
+	dir := t.TempDir()
+	c := NewController(&fakeSource{snap: fullSnapshot()}, Options{DataDir: dir, Now: clock.Now})
+	t.Cleanup(c.Close)
+	cfg := Config{Listen: "127.0.0.1:0", Token: testToken, Network: true}
+	c.Apply(cfg, "")
+	c.settle()
+	before, err := os.ReadFile(filepath.Join(dir, selfSignedCert))
+	if err != nil || c.Mode() != ModeNetwork {
+		t.Fatalf("not started: %v %v", c.Mode(), err)
+	}
+	clock.advance(24 * time.Hour)
+	c.Apply(cfg, "")
+	c.settle()
+	if same, _ := os.ReadFile(filepath.Join(dir, selfSignedCert)); !bytes.Equal(same, before) {
+		t.Fatal("renewed a certificate far from its end")
+	}
+	clock.advance(selfSignedLifetime - selfSignedRenew)
+	c.Apply(cfg, "")
+	c.settle()
+	after, _ := os.ReadFile(filepath.Join(dir, selfSignedCert))
+	if bytes.Equal(after, before) || c.Mode() != ModeNetwork {
+		t.Fatalf("not renewed near its end (mode %v)", c.Mode())
 	}
 }
 

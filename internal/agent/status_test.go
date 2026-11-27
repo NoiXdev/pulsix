@@ -203,3 +203,21 @@ func TestStatusSnapshotShowsWhatWasSent(t *testing.T) {
 		t.Fatalf("checks after removal = %+v", s.Checks)
 	}
 }
+
+// TestLoopUnresolvableListenDoesNotDelayTheHeartbeatPath: a listen name
+// that never resolves must not hold up a look at agent.yaml, which the
+// heartbeat makes under localMu (review 3.132, finding 4).
+func TestLoopUnresolvableListenDoesNotDelayTheHeartbeatPath(t *testing.T) {
+	lt := newLoopTest(t)
+	writeSecretsFile(t, lt.cfg.SecretsPath, twoSecrets+"status_page:\n  listen: never-resolves.test:8742\n  token: 0123456789abcdef0123456789abcdef\n")
+	hang := func(ctx context.Context, _, _ string) (net.Listener, error) { <-ctx.Done(); return nil, ctx.Err() }
+	l := NewLoop(lt.cfg, lt.dialer, lt.facts, append(lt.options(), withStatusPageListen(hang))...)
+	t.Cleanup(l.statusPage.Close)
+	start := time.Now()
+	for range 3 {
+		l.lookAndApplyLocal()
+	}
+	if took := time.Since(start); took > 300*time.Millisecond {
+		t.Fatalf("three looks took %v", took)
+	}
+}

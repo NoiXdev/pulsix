@@ -8,6 +8,8 @@
 package agent
 
 import (
+	"context"
+	"net"
 	"net/url"
 	"os"
 	"runtime"
@@ -149,7 +151,14 @@ func (l *Loop) newStatusPage() *statuspage.Controller {
 		Redact:  func(s string) string { return l.redactor().Redact(s) },
 		Log:     l.log,
 		Now:     l.now,
+		Listen:  l.statusPageListen,
 	})
+}
+
+// withStatusPageListen replaces how the status page opens its listener
+// (tests: one that never answers).
+func withStatusPageListen(fn func(ctx context.Context, network, addr string) (net.Listener, error)) LoopOption {
+	return func(l *Loop) { l.statusPageListen = fn }
 }
 
 // applyStatusPage hands the file's status_page section to the page's
