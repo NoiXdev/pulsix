@@ -9,17 +9,22 @@ import { Select } from '../../ui/Select.tsx';
 import { useCreateChannel, useUpdateChannel } from '../../api/hooks/useNotifications.ts';
 import type { NotifyChannel, NotifyChannelInput } from '../../api/types.ts';
 import { useT } from '../../i18n/useT.ts';
+import { PresetFields } from './PresetFields.tsx';
+import { BUILT_URL, SECRET_NAMES, initialSettings, settingsBody, type Preset, type SecretName } from './presetSettings.ts';
 
 const TEXTAREA = 'min-h-20 w-full rounded-md border border-border bg-background p-2 font-mono text-xs';
 
-type Preset = NonNullable<NonNullable<NotifyChannel['webhook']>['preset']>;
+/** Every format, in the order the select lists them. */
+const PRESETS: readonly Preset[] = ['', 'slack', 'mattermost', 'telegram', 'ntfy', 'pushover', 'twilio', 'pagerduty'];
 
-/** The shape of each service's URL, as the URL field's placeholder. */
-const URL_SHAPES: Record<Preset, string> = {
+/** The shape of each service's URL, as the URL field's placeholder (none
+ * where Pulsix builds the URL). */
+const URL_SHAPES: Partial<Record<Preset, string>> = {
   '': 'https://hooks.example.com/…',
   slack: 'https://hooks.slack.com/services/…',
   mattermost: 'https://mattermost.example.com/hooks/…',
   telegram: 'https://api.telegram.org/bot<token>/sendMessage',
+  ntfy: 'https://ntfy.sh/<topic>',
 };
 
 interface HeaderRow {
@@ -64,12 +69,19 @@ export function ChannelDialog({ org, channel, mailAvailable, onClose, onCreated,
   const [secret, setSecret] = useState('');
   const [preset, setPreset] = useState<Preset>(channel?.webhook?.preset ?? '');
   const [chatId, setChatId] = useState(channel?.webhook?.chat_id ?? '');
+  const [settings, setSettings] = useState(() => initialSettings(channel));
+  const [secrets, setSecrets] = useState<Partial<Record<SecretName, string>>>({});
   const [error, setError] = useState<string | null>(null);
   // A preset owns the body (backlog 4.7): no method choice, no template.
   // Changing it while editing needs the URL again, since the stored one
   // belongs to the old service and is never shown.
   const presetChanged = editing && preset !== (channel.webhook?.preset ?? '');
-  const urlRequired = !editing || presetChanged;
+  // Pushover, Twilio and PagerDuty have no URL to enter (backlog 4.8).
+  const builtUrl = BUILT_URL.has(preset);
+  const urlRequired = !builtUrl && (!editing || presetChanged);
+  // A preset's stored secrets are kept while it stays the same.
+  const storedSecrets = editing && !presetChanged ? (channel.webhook?.secrets ?? []) : [];
+  const typedSecrets = Object.fromEntries((SECRET_NAMES[preset] ?? []).filter((n) => (secrets[n] ?? '') !== '').map((n) => [n, secrets[n] as string]));
   // A preset sends its own Content-Type (review M2): such a row stays in
   // the form, so switching back to a generic webhook keeps it, but is not
   // sent while a preset is chosen.
@@ -86,13 +98,15 @@ export function ChannelDialog({ org, channel, mailAvailable, onClose, onCreated,
       enabled,
       webhook: {
         method: preset !== '' ? 'POST' : method,
-        ...(url.trim() !== '' ? { url: url.trim() } : {}),
+        ...(url.trim() !== '' && !builtUrl ? { url: url.trim() } : {}),
         headers: headers.filter((h) => h.name.trim() !== '' && !ownedByPreset(h)).map((h) => (h.value !== '' ? { name: h.name.trim(), value: h.value } : { name: h.name.trim() })),
         ...(preset === '' ? { body_template: template } : {}),
         signed,
         ...(signed && secret !== '' ? { signing_secret: secret } : {}),
         ...(preset !== '' ? { preset } : {}),
         ...(preset === 'telegram' ? { chat_id: chatId.trim() } : {}),
+        ...settingsBody(preset, settings),
+        ...(Object.keys(typedSecrets).length > 0 ? { secrets: typedSecrets } : {}),
       },
     };
   }
@@ -148,7 +162,7 @@ export function ChannelDialog({ org, channel, mailAvailable, onClose, onCreated,
             <Label htmlFor="ch-preset">{d.format}</Label>
             <Select
               id="ch-preset"
-              options={(['', 'slack', 'mattermost', 'telegram'] as const).map((p) => ({ value: p, label: d.formats[p === '' ? 'raw' : p] }))}
+              options={PRESETS.map((p) => ({ value: p, label: d.formats[p === '' ? 'raw' : p] }))}
               value={preset}
               onChange={(v) => setPreset(v as Preset)}
             />
@@ -167,12 +181,14 @@ export function ChannelDialog({ org, channel, mailAvailable, onClose, onCreated,
                   />
                 </div>
               )}
-              <div className="flex flex-col gap-1">
-                <Label htmlFor="ch-url">{editing && !presetChanged ? d.urlNow(channel.webhook?.url ?? '') : d.url}</Label>
-                <Input id="ch-url" className="font-mono" value={url} onChange={(e) => setUrl(e.target.value)} placeholder={keep ?? URL_SHAPES[preset]} required={urlRequired} />
-              </div>
+              {!builtUrl && (
+                <div className="flex flex-col gap-1">
+                  <Label htmlFor="ch-url">{editing && !presetChanged ? d.urlNow(channel.webhook?.url ?? '') : d.url}</Label>
+                  <Input id="ch-url" className="font-mono" value={url} onChange={(e) => setUrl(e.target.value)} placeholder={keep ?? URL_SHAPES[preset]} required={urlRequired} />
+                </div>
+              )}
             </div>
-            {presetChanged && <p className="text-[11px] text-muted-foreground">{d.formatUrlAgain}</p>}
+            {presetChanged && !builtUrl && <p className="text-[11px] text-muted-foreground">{d.formatUrlAgain}</p>}
             {preset === 'telegram' && (
               <>
                 <p className="text-[11px] text-muted-foreground">{d.telegramToken}</p>
@@ -180,6 +196,15 @@ export function ChannelDialog({ org, channel, mailAvailable, onClose, onCreated,
                 <Input id="ch-chat" className="font-mono" value={chatId} onChange={(e) => setChatId(e.target.value)} placeholder={d.chatIdPlaceholder} required maxLength={64} />
               </>
             )}
+            <PresetFields
+              preset={preset}
+              settings={settings}
+              onSettings={setSettings}
+              secrets={secrets}
+              onSecret={(name, value) => setSecrets({ ...secrets, [name]: value })}
+              stored={storedSecrets}
+              d={d}
+            />
             <span className="text-[11px] font-medium text-muted-foreground">{d.headers}</span>
             {headers.map((h, i) => (
               <div key={i} className="grid grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)_32px] gap-2">
