@@ -85,7 +85,7 @@ func TestRunnerVantageCheckEndToEnd(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
-		if err := agentsSvc.SetProbesSupported(ctx, h, true); err != nil {
+		if err := agentsSvc.Heartbeat(ctx, "77"+string(rune('0'+i)), agents.HeartbeatReport{Version: "v1", ProbesSupported: true}); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -147,13 +147,17 @@ WHERE cert_serial = sqlc.arg(serial);
 
 -- name: RecordAgentHeartbeat :exec
 -- A heartbeat message (org-unscoped, by serial like TouchAgentBySerial):
--- last_seen, the build version, the agent's secrets report and its local
--- checks report (00095) in one statement. The four report columns are NULL
--- together for an agent that sends no report (older than agent.yaml), so
--- a downgrade reads as unknown rather than keeping what a newer build
--- said. connected_since and online_since follow TouchAgentBySerial's
--- rules, word for word.
+-- last_seen, the build version, the agent's secrets report, its local
+-- checks report (00095) and its probes_supported flag (00098, backlog
+-- 3.79: here rather than in a statement of its own per heartbeat) in one
+-- statement. The four report columns are NULL together for an agent that
+-- sends no report (older than agent.yaml), so a downgrade reads as
+-- unknown rather than keeping what a newer build said; an agent that
+-- sends no flag (older than vantages) is not probe capable.
+-- connected_since and online_since follow TouchAgentBySerial's rules,
+-- word for word.
 UPDATE host_agents SET last_seen = now(), version = sqlc.arg(version),
+  probes_supported = sqlc.arg(probes_supported),
   secret_names = sqlc.narg(secret_names)::text[], secrets_state = sqlc.narg(secrets_state),
   local_checks = CASE WHEN local_checks IS DISTINCT FROM sqlc.narg(local_checks)::jsonb
     THEN sqlc.narg(local_checks)::jsonb ELSE local_checks END,
@@ -297,12 +301,6 @@ WHERE NOT EXISTS (
   WHERE host_id = sqlc.arg(host_id) AND key = sqlc.arg(key) AND source = 'manual'
 )
 ON CONFLICT (host_id, key, source) DO UPDATE SET value = EXCLUDED.value;
-
--- name: SetAgentProbesSupported :exec
--- The heartbeat's probes_supported flag (00098), org-unscoped by host id
--- like the other heartbeat writes; written only when it changes.
-UPDATE host_agents SET probes_supported = sqlc.arg(supported)
-WHERE host_id = sqlc.arg(host_id) AND probes_supported IS DISTINCT FROM sqlc.arg(supported);
 
 -- name: SetAgentHeartbeatInterval :exec
 -- The agent's reported heartbeat interval (00119, backlog 3.58), by serial

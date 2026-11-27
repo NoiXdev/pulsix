@@ -393,7 +393,7 @@ func (f *fakeAgentStore) Renew(ctx context.Context, a agents.Agent, fromSerial s
 }
 
 func (f *fakeAgentStore) Touch(context.Context, string, string) error { return nil }
-func (f *fakeAgentStore) Heartbeat(context.Context, string, string, agents.SecretsReport, agents.LocalChecksReport) error {
+func (f *fakeAgentStore) Heartbeat(context.Context, string, string, agents.SecretsReport, agents.LocalChecksReport, bool) error {
 	return nil
 }
 
@@ -694,7 +694,6 @@ func (h *harness) dial(cfg *tls.Config) *grpc.ClientConn {
 	return conn
 }
 
-func (f *fakeAgentStore) SetProbesSupported(context.Context, uuid.UUID, bool) error { return nil }
 func (f *fakeAgentStore) RecordHeartbeatInterval(context.Context, string, *time.Duration) error {
 	return nil
 }

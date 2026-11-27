@@ -682,27 +682,29 @@ func (q *Queries) RecordAgentConfigCheck(ctx context.Context, arg RecordAgentCon
 
 const recordAgentHeartbeat = `-- name: RecordAgentHeartbeat :exec
 UPDATE host_agents SET last_seen = now(), version = $1,
-  secret_names = $2::text[], secrets_state = $3,
-  local_checks = CASE WHEN local_checks IS DISTINCT FROM $4::jsonb
-    THEN $4::jsonb ELSE local_checks END,
-  local_check_problems = CASE WHEN local_check_problems IS DISTINCT FROM $5::text[]
-    THEN $5::text[] ELSE local_check_problems END,
+  probes_supported = $2,
+  secret_names = $3::text[], secrets_state = $4,
+  local_checks = CASE WHEN local_checks IS DISTINCT FROM $5::jsonb
+    THEN $5::jsonb ELSE local_checks END,
+  local_check_problems = CASE WHEN local_check_problems IS DISTINCT FROM $6::text[]
+    THEN $6::text[] ELSE local_check_problems END,
   connected_since = CASE
     WHEN connected_since IS NULL
       OR (last_seen IS NOT NULL
-          AND last_seen < now() - make_interval(secs => $6::double precision))
+          AND last_seen < now() - make_interval(secs => $7::double precision))
     THEN now() ELSE connected_since END,
   online_since = CASE
     WHEN last_seen IS NULL OR online_since IS NULL
-      OR last_seen < now() - make_interval(secs => LEAST($7::double precision,
-          GREATEST($8::double precision,
-            $9::double precision * COALESCE(heartbeat_interval_s, 0))))
+      OR last_seen < now() - make_interval(secs => LEAST($8::double precision,
+          GREATEST($9::double precision,
+            $10::double precision * COALESCE(heartbeat_interval_s, 0))))
     THEN now() ELSE online_since END
-WHERE cert_serial = $10
+WHERE cert_serial = $11
 `
 
 type RecordAgentHeartbeatParams struct {
 	Version                   string   `json:"version"`
+	ProbesSupported           bool     `json:"probes_supported"`
 	SecretNames               []string `json:"secret_names"`
 	SecretsState              *string  `json:"secrets_state"`
 	LocalChecks               []byte   `json:"local_checks"`
@@ -715,15 +717,19 @@ type RecordAgentHeartbeatParams struct {
 }
 
 // A heartbeat message (org-unscoped, by serial like TouchAgentBySerial):
-// last_seen, the build version, the agent's secrets report and its local
-// checks report (00095) in one statement. The four report columns are NULL
-// together for an agent that sends no report (older than agent.yaml), so
-// a downgrade reads as unknown rather than keeping what a newer build
-// said. connected_since and online_since follow TouchAgentBySerial's
-// rules, word for word.
+// last_seen, the build version, the agent's secrets report, its local
+// checks report (00095) and its probes_supported flag (00098, backlog
+// 3.79: here rather than in a statement of its own per heartbeat) in one
+// statement. The four report columns are NULL together for an agent that
+// sends no report (older than agent.yaml), so a downgrade reads as
+// unknown rather than keeping what a newer build said; an agent that
+// sends no flag (older than vantages) is not probe capable.
+// connected_since and online_since follow TouchAgentBySerial's rules,
+// word for word.
 func (q *Queries) RecordAgentHeartbeat(ctx context.Context, arg RecordAgentHeartbeatParams) error {
 	_, err := q.db.Exec(ctx, recordAgentHeartbeat,
 		arg.Version,
+		arg.ProbesSupported,
 		arg.SecretNames,
 		arg.SecretsState,
 		arg.LocalChecks,
@@ -769,23 +775,6 @@ type SetAgentHeartbeatIntervalParams struct {
 // none. Written only when it changes.
 func (q *Queries) SetAgentHeartbeatInterval(ctx context.Context, arg SetAgentHeartbeatIntervalParams) error {
 	_, err := q.db.Exec(ctx, setAgentHeartbeatInterval, arg.IntervalSeconds, arg.Serial)
-	return err
-}
-
-const setAgentProbesSupported = `-- name: SetAgentProbesSupported :exec
-UPDATE host_agents SET probes_supported = $1
-WHERE host_id = $2 AND probes_supported IS DISTINCT FROM $1
-`
-
-type SetAgentProbesSupportedParams struct {
-	Supported bool      `json:"supported"`
-	HostID    uuid.UUID `json:"host_id"`
-}
-
-// The heartbeat's probes_supported flag (00098), org-unscoped by host id
-// like the other heartbeat writes; written only when it changes.
-func (q *Queries) SetAgentProbesSupported(ctx context.Context, arg SetAgentProbesSupportedParams) error {
-	_, err := q.db.Exec(ctx, setAgentProbesSupported, arg.Supported, arg.HostID)
 	return err
 }
 

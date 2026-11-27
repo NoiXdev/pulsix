@@ -217,7 +217,7 @@ func (f *integAgentStore) Touch(_ context.Context, serial, version string) error
 
 // Heartbeat records like Touch: this harness asserts that heartbeats
 // arrive, not what they report about the agent.yaml file.
-func (f *integAgentStore) Heartbeat(ctx context.Context, serial, version string, _ agents.SecretsReport, _ agents.LocalChecksReport) error {
+func (f *integAgentStore) Heartbeat(ctx context.Context, serial, version string, _ agents.SecretsReport, _ agents.LocalChecksReport, _ bool) error {
 	return f.Touch(ctx, serial, version)
 }
 
@@ -579,7 +579,6 @@ func (h *integHarness) renewedSerialDiffers(old *big.Int) bool {
 	return current.Cmp(old) != 0
 }
 
-func (f *integAgentStore) SetProbesSupported(context.Context, uuid.UUID, bool) error { return nil }
 func (f *integAgentStore) RecordHeartbeatInterval(context.Context, string, *time.Duration) error {
 	return nil
 }

@@ -268,9 +268,9 @@ func (s *SQLStore) Touch(ctx context.Context, serial, version string) error {
 // online period's start (Touch's rule, OnlineWindow) in one statement. An
 // unknown report writes NULL to its columns; a known one writes its names,
 // checks and problems as (possibly empty, never NULL) arrays.
-func (s *SQLStore) Heartbeat(ctx context.Context, serial, version string, secrets SecretsReport, local LocalChecksReport) error {
+func (s *SQLStore) Heartbeat(ctx context.Context, serial, version string, secrets SecretsReport, local LocalChecksReport, probesSupported bool) error {
 	p := gen.RecordAgentHeartbeatParams{
-		Serial: serial, Version: version, ReconnectGapSeconds: reconnectGap.Seconds(),
+		Serial: serial, Version: version, ProbesSupported: probesSupported, ReconnectGapSeconds: reconnectGap.Seconds(),
 		OnlineWindowFloorSeconds: OnlineWindowFloor.Seconds(), HeartbeatsPerOnlineWindow: HeartbeatsPerOnlineWindow,
 		BufferWindowSeconds: DisconnectBufferWindow.Seconds(),
 	}

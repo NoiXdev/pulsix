@@ -10,15 +10,6 @@ import (
 	"github.com/noixdev/pulsix/internal/db/gen"
 )
 
-// SetProbesSupported stores the heartbeat's probes_supported flag by host,
-// org-unscoped like the other heartbeat writes.
-func (s *SQLStore) SetProbesSupported(ctx context.Context, hostID uuid.UUID, supported bool) error {
-	if err := s.q.SetAgentProbesSupported(ctx, gen.SetAgentProbesSupportedParams{HostID: hostID, Supported: supported}); err != nil {
-		return fmt.Errorf("set agent probes supported: %w", err)
-	}
-	return nil
-}
-
 // ProbeCapableAgents lists the organization's agents that report
 // probes_supported, under the caller's organization scope.
 func (s *SQLStore) ProbeCapableAgents(ctx context.Context, orgID uuid.UUID) ([]ProbeCapable, error) {

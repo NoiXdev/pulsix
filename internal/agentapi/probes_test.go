@@ -211,29 +211,35 @@ func TestHeartbeatWithoutProbesSupportedGetsNoProbeConfig(t *testing.T) {
 	}
 }
 
-// TestHeartbeatRecordsProbesSupported: every heartbeat hands its flag to the
-// registry (which writes only a change), keyed by the agent's host.
-func TestHeartbeatRecordsProbesSupported(t *testing.T) {
+// TestHeartbeatCarriesProbesSupported: every heartbeat's flag rides the
+// heartbeat's own registry write, keyed by the agent's serial — one write
+// per heartbeat, no separate one for the flag (backlog 3.79).
+func TestHeartbeatCarriesProbesSupported(t *testing.T) {
 	h, agentHost, stream := probeAgent(t)
 	sendAndAck(t, stream, probeHeartbeat(true, ""))
 	sendAndAck(t, stream, probeHeartbeat(false, ""))
-	want := []probesSupportedCall{{agentHost, true}, {agentHost, false}}
+	var serial string
+	h.store.mu.Lock()
+	for _, a := range h.store.agentsR {
+		if a.HostID == agentHost {
+			serial = a.CertSerial
+		}
+	}
+	h.store.mu.Unlock()
+	want := []probesSupportedCall{{serial, true}, {serial, false}}
 	if got := h.store.probesSupportedCalls(); !slices.Equal(got, want) {
-		t.Fatalf("SetProbesSupported calls = %+v, want %+v", got, want)
+		t.Fatalf("heartbeat writes = %+v, want %+v", got, want)
 	}
 }
 
-// TestHeartbeatProbeFaultsKeepTheStream: a failing assignment read or flag
-// write is logged; the ack goes out (with the CheckConfig the heartbeat
+// TestHeartbeatProbeFaultsKeepTheStream: a failing assignment read is
+// logged; the ack goes out (with the CheckConfig the heartbeat
 // earned), without a ProbeConfig, and the stream lives on.
 func TestHeartbeatProbeFaultsKeepTheStream(t *testing.T) {
 	h, agentHost, stream := probeAgent(t)
 	h.checks.setResolved(agentHost, checks.ResolvedSet{HostID: agentHost, Version: "v1"})
 	h.probes.setAssignments(agentHost, httpSlot(agentHost, targetA))
 	h.probes.assignErr = errors.New("db down")
-	h.store.mu.Lock()
-	h.store.probesSupportedErr = errors.New("db down")
-	h.store.mu.Unlock()
 
 	msg := sendAndAck(t, stream, probeHeartbeat(true, ""))
 	if msg.GetProbeConfig() != nil {
