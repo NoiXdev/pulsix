@@ -12,7 +12,7 @@ import (
 // rows, never a default hidden in Go code (the design's own position — an
 // operator must be able to see a threshold, change it and delete it, and
 // deleting it must mean "no rule", not "silently fall back to a hardcoded
-// value"). All twenty-two bind at scope org, in form mode.
+// value"). All twenty-four bind at scope org, in form mode.
 //
 // The two script rules (backlog 3.6g) judge the verdict a host-defined
 // script reports: crit is critical, warn and unknown are warnings (a script
@@ -35,7 +35,8 @@ import (
 // alert on the first evaluation (docs/upgrades.md).
 //
 // The six assertion rules (backlog 3.87) do for tcp, dns and tls what the
-// two web assertion rules do for http.
+// two web assertion rules do for http, and the two snmp assertion rules
+// (backlog 3.134) for snmp.
 //
 // service.state deliberately has no row here, and that is not an
 // oversight: backlog 4.3's standing ruling is that the seeded sshd check
@@ -51,12 +52,14 @@ import (
 // backfill migrations encode the same rows in SQL for organizations that
 // already existed — 00045 the first five, 00094 the two script rules,
 // 00097 the two SNMP rules, 00104 the seven synthetic-check rules, 00134
-// the six assertion rules. A migration cannot call Go code, so keep them
+// the six assertion rules, 00135 the two snmp assertion rules. A migration
+// cannot call Go code, so keep them
 // in sync by hand when either changes (TestRulesBackfillMatchesSeedRules,
 // TestScriptRulesMigrationMatchesSeedForOrg and
 // TestSNMPRulesMigrationMatchesSeedForOrg and
-// TestWebRulesMigrationMatchesSeedForOrg and
-// TestAssertionRulesMigrationMatchesSeedForOrg compare them).
+// TestWebRulesMigrationMatchesSeedForOrg,
+// TestAssertionRulesMigrationMatchesSeedForOrg and
+// TestSNMPAssertionRulesMigrationMatchesSeedForOrg compare them).
 func SeedRules() []RuleInput {
 	return []RuleInput{
 		{
@@ -148,11 +151,13 @@ func SeedRules() []RuleInput {
 		assertionRule("DNS assertion failed (critical)", "dns", SeverityCrit),
 		assertionRule("TLS assertion failed", "tls", SeverityWarn),
 		assertionRule("TLS assertion failed (critical)", "tls", SeverityCrit),
+		assertionRule("SNMP assertion failed", "snmp", SeverityWarn),
+		assertionRule("SNMP assertion failed (critical)", "snmp", SeverityCrit),
 	}
 }
 
 // assertionRule is the seed rule that alerts at sev when an assertion of
-// plugin reports that severity (backlog 3.87): <plugin>.assertion carries
+// plugin reports that severity (backlog 3.87, 3.134): <plugin>.assertion carries
 // pass, or a failed entry's severity.
 func assertionRule(name, plugin string, sev Severity) RuleInput {
 	metric := plugin + ".assertion"
