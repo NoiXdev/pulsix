@@ -362,6 +362,34 @@ func (q *Queries) ListWorkers(ctx context.Context, orgID uuid.UUID) ([]Worker, e
 	return items, nil
 }
 
+const listWorkersNotActive = `-- name: ListWorkersNotActive :many
+SELECT ids.id::uuid AS id FROM unnest($1::uuid[]) AS ids(id)
+WHERE NOT EXISTS (SELECT 1 FROM workers w WHERE w.id = ids.id AND w.status = 'active')
+`
+
+// Of the given worker ids, those revoked or no longer present: the
+// revocation watcher's rescan of the workers with open streams (backlog
+// 2.54). Outside any org scope; workers carries no row-level security.
+func (q *Queries) ListWorkersNotActive(ctx context.Context, ids []uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listWorkersNotActive, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockWorkerByName = `-- name: LockWorkerByName :one
 SELECT id, org_id, zone_id, name, cert_serial, last_seen, version, created_at, status, revoked_at FROM workers WHERE org_id = $1 AND name = $2 FOR UPDATE
 `
@@ -501,6 +529,19 @@ func (q *Queries) NewestWorkerCertificateStart(ctx context.Context, arg NewestWo
 	var not_before time.Time
 	err := row.Scan(&not_before)
 	return not_before, err
+}
+
+const notifyWorkerRevoked = `-- name: NotifyWorkerRevoked :exec
+SELECT pg_notify('pulsix_worker_revoked', $1::uuid::text)
+`
+
+// Tells every manager's revocation watcher (backlog 2.54) that the worker
+// was revoked. Run inside the revocation's transaction: Postgres delivers
+// the notification only when it commits. The channel name is
+// workers.RevocationChannel.
+func (q *Queries) NotifyWorkerRevoked(ctx context.Context, workerID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, notifyWorkerRevoked, workerID)
+	return err
 }
 
 const revokeWorker = `-- name: RevokeWorker :one

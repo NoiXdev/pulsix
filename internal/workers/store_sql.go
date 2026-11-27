@@ -309,8 +309,9 @@ func (s *SQLStore) Get(ctx context.Context, orgID, id uuid.UUID) (Worker, error)
 	return toWorker(row)
 }
 
-// Revoke marks the worker and every certificate it holds revoked, in one
-// transaction bound to the worker's organization.
+// Revoke marks the worker and every certificate it holds revoked and
+// announces it on RevocationChannel, in one transaction bound to the
+// worker's organization.
 func (s *SQLStore) Revoke(ctx context.Context, orgID, id uuid.UUID) (Worker, error) {
 	var out Worker
 	err := s.d.WithWriteTx(ctx, orgID, func(ctx context.Context) error {
@@ -323,6 +324,11 @@ func (s *SQLStore) Revoke(ctx context.Context, orgID, id uuid.UUID) (Worker, err
 		}
 		if err := s.q.RevokeWorkerCertificates(ctx, gen.RevokeWorkerCertificatesParams{OrgID: orgID, WorkerID: id}); err != nil {
 			return fmt.Errorf("revoke worker certificates: %w", err)
+		}
+		// Every manager's RevocationWatcher hears of it once this commits,
+		// and only then (backlog 2.54).
+		if err := s.q.NotifyWorkerRevoked(ctx, id); err != nil {
+			return fmt.Errorf("announce the revocation: %w", err)
 		}
 		out, err = toWorker(row)
 		return err
