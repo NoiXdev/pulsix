@@ -19,6 +19,10 @@ type Subject struct {
 	HostID   uuid.UUID
 	Severity rules.State
 	Event    alerts.EventKind
+	// Told lists the routes that already delivered something about this
+	// subject's alert (their escalation base, alert_escalations position
+	// 0). Only a closed event reads it; see MatchRoutes.
+	Told []uuid.UUID
 }
 
 // MatchRoutes returns every route in routes that applies to s, given which
@@ -26,7 +30,9 @@ type Subject struct {
 // matches when it is enabled, its scope covers the host, and both its
 // severity set and its event set contain the subject's values (sets, not
 // thresholds — see rules.StateRank's own doc comment for why unknown
-// ranking below warn makes a threshold the wrong shape here). Routes add up
+// ranking below warn makes a threshold the wrong shape here). A closed
+// event also matches a route outside its severity set that already told
+// somebody about the alert (owesResolve). Routes add up
 // (Scope's own doc comment, backlog 4.1b): every matching route is
 // returned, not just the first or the narrowest.
 //
@@ -49,7 +55,7 @@ func MatchRoutes(s Subject, hostGroups []uuid.UUID, routes []Route) []Route {
 		if !scopeCovers(r, s.HostID, hostGroups) {
 			continue
 		}
-		if !slices.Contains(r.Severities, s.Severity) {
+		if !slices.Contains(r.Severities, s.Severity) && !owesResolve(r, s) {
 			continue
 		}
 		if !slices.Contains(r.Events, s.Event) {
@@ -58,6 +64,20 @@ func MatchRoutes(s Subject, hostGroups []uuid.UUID, routes []Route) []Route {
 		matched = append(matched, r)
 	}
 	return matched
+}
+
+// owesResolve reports whether r must hear s's closed event whatever the
+// alert's severity is now: r already delivered something about the alert
+// (s.Told). An alert routinely eases before it clears — crit, then warn,
+// then ok — and matched on the live severity alone, a crit-only route
+// that paged on "opened" would find the closed event outside its set and
+// the person it paged would never hear the alert resolved (backlog
+// 2.144). The resolve belongs to the audience of the page. Only the
+// severity selection is waived: the route must still be enabled, cover
+// the host and ask for "closed". Every other event kind still matches on
+// the severity the alert has now (the spec's "Resolution" section).
+func owesResolve(r Route, s Subject) bool {
+	return s.Event == alerts.EventClosed && slices.Contains(s.Told, r.ID)
 }
 
 // scopeCovers reports whether r's scope reaches hostID, given the

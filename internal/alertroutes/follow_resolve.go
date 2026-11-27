@@ -187,6 +187,15 @@ func (r *resolution) route(ctx context.Context, ev PendingEvent) (routing, error
 		return routing{}, err
 	}
 	subject := Subject{HostID: ev.HostID, Severity: ev.Severity, Event: ev.Kind}
+	if ev.Kind == alerts.EventClosed {
+		// The routes that delivered about this alert are owed its resolve
+		// whatever its severity is now (match.go's owesResolve). Read on
+		// the tick's transaction, so a base this same tick claimed for an
+		// earlier event of the alert counts too.
+		if subject.Told, err = r.f.store.ToldRoutes(ctx, r.tx, r.orgID, ev.AlertID); err != nil {
+			return routing{}, err
+		}
+	}
 	matched := MatchRoutes(subject, hostGroups, r.routes)
 
 	var open []Route

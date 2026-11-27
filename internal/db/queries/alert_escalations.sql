@@ -70,6 +70,18 @@ INSERT INTO alert_escalations (org_id, alert_id, route_id, position, fired_at)
 VALUES (@org_id, @alert_id, @route_id, @position, @fired_at)
 ON CONFLICT (alert_id, route_id, position) DO NOTHING;
 
+-- name: ToldRoutesForAlert :many
+-- Every route that already delivered something about one alert: its
+-- escalation base (position 0), which the follower claims for each route
+-- the moment an event goes out through it (follow.go's claimBases). The
+-- follower reads it for a closed event only, so the resolve reaches the
+-- audience of the page even when the alert's severity has since left the
+-- route's set (backlog 2.144, match.go's MatchRoutes). The index
+-- alert_escalations_alert_idx leads with (org_id, alert_id).
+SELECT route_id FROM alert_escalations
+WHERE org_id = @org_id AND alert_id = @alert_id AND position = 0
+ORDER BY route_id;
+
 -- name: InsertEscalatedEvent :exec
 -- Spec decision 7: an escalation is visible on the alert itself, not only
 -- in the channel it reached — "the alert page shows an untouched timeline

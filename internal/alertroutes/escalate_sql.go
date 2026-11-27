@@ -104,6 +104,18 @@ func (s *Store) ClaimStep(ctx context.Context, tx pgx.Tx, orgID, alertID, routeI
 	return n > 0, nil
 }
 
+// ToldRoutes returns every route that already delivered something about
+// alertID — the routes holding its escalation base (ClaimStep at position
+// 0, which decide claims for each route an event goes out through). The
+// follower asks it for a closed event only (resolution.route).
+func (s *Store) ToldRoutes(ctx context.Context, tx pgx.Tx, orgID, alertID uuid.UUID) ([]uuid.UUID, error) {
+	ids, err := gen.New(tx).ToldRoutesForAlert(ctx, gen.ToldRoutesForAlertParams{OrgID: orgID, AlertID: alertID})
+	if err != nil {
+		return nil, fmt.Errorf("told routes for alert %s: %w", alertID, err)
+	}
+	return ids, nil
+}
+
 // RecordEscalation writes the 'escalated' alert_events row for one step
 // firing — the follower's second pass (a later task) calls it once a step
 // has actually been claimed and enqueued, mirroring InsertAlertEvent's own

@@ -112,6 +112,60 @@ func TestMatchRoutes(t *testing.T) {
 	}
 }
 
+// TestMatchRoutesClosedReachesTheRoutesThatTold pins backlog 2.144: a
+// closed event reaches every route that already delivered something about
+// its alert (Subject.Told), whatever severity the alert eased to before it
+// closed. A crit-only route pages on "opened" at crit; the alert falls to
+// warn (a falling severity writes no event) and then clears. Matched on
+// the live severity alone, the closed event found no route and the person
+// who was paged never heard it had resolved. Every other selection still
+// holds: the route must be enabled, cover the host and ask for "closed".
+func TestMatchRoutesClosedReachesTheRoutesThatTold(t *testing.T) {
+	host, other := uuid.New(), uuid.New()
+	crit := []rules.State{rules.StateCrit}
+	openedClosed := []alerts.EventKind{alerts.EventOpened, alerts.EventClosed}
+	route := func(enabled bool, sc alertroutes.Scope, id *uuid.UUID, ev []alerts.EventKind) alertroutes.Route {
+		return alertroutes.Route{
+			ID: uuid.New(), Enabled: enabled, Scope: sc, ScopeID: id,
+			Severities: crit, Events: ev, Channels: []uuid.UUID{uuid.New()},
+		}
+	}
+
+	tests := []struct {
+		name  string
+		event alerts.EventKind
+		route alertroutes.Route
+		told  bool
+		want  int
+	}{
+		{name: "closed at a lower severity reaches a route that told", event: alerts.EventClosed,
+			route: route(true, alertroutes.ScopeOrg, nil, openedClosed), told: true, want: 1},
+		{name: "closed at a lower severity misses a route that never told", event: alerts.EventClosed,
+			route: route(true, alertroutes.ScopeOrg, nil, openedClosed), want: 0},
+		{name: "a route that told but does not ask for closed", event: alerts.EventClosed,
+			route: route(true, alertroutes.ScopeOrg, nil, []alerts.EventKind{alerts.EventOpened}), told: true, want: 0},
+		{name: "a route that told but is disabled now", event: alerts.EventClosed,
+			route: route(false, alertroutes.ScopeOrg, nil, openedClosed), told: true, want: 0},
+		{name: "a route that told but no longer covers the host", event: alerts.EventClosed,
+			route: route(true, alertroutes.ScopeHost, &other, openedClosed), told: true, want: 0},
+		// Only the resolve is owed to the audience of the page: any other
+		// event still matches on the severity the alert has now.
+		{name: "an acknowledgement at a lower severity still needs the severity", event: alerts.EventAcknowledged,
+			route: route(true, alertroutes.ScopeOrg, nil, []alerts.EventKind{alerts.EventAcknowledged}), told: true, want: 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := alertroutes.Subject{HostID: host, Severity: rules.StateWarn, Event: tc.event}
+			if tc.told {
+				s.Told = []uuid.UUID{tc.route.ID}
+			}
+			if got := alertroutes.MatchRoutes(s, nil, []alertroutes.Route{tc.route}); len(got) != tc.want {
+				t.Errorf("MatchRoutes() matched %d routes, want %d", len(got), tc.want)
+			}
+		})
+	}
+}
+
 func TestChannelsUnionDeduplicates(t *testing.T) {
 	// Decision 2: two routes pointing at one channel means the alert
 	// reaches it once. The union happens here, in resolution, which is

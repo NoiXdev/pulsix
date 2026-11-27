@@ -480,3 +480,41 @@ func (q *Queries) ListEscalationStepsForRoutes(ctx context.Context, arg ListEsca
 	}
 	return items, nil
 }
+
+const toldRoutesForAlert = `-- name: ToldRoutesForAlert :many
+SELECT route_id FROM alert_escalations
+WHERE org_id = $1 AND alert_id = $2 AND position = 0
+ORDER BY route_id
+`
+
+type ToldRoutesForAlertParams struct {
+	OrgID   uuid.UUID `json:"org_id"`
+	AlertID uuid.UUID `json:"alert_id"`
+}
+
+// Every route that already delivered something about one alert: its
+// escalation base (position 0), which the follower claims for each route
+// the moment an event goes out through it (follow.go's claimBases). The
+// follower reads it for a closed event only, so the resolve reaches the
+// audience of the page even when the alert's severity has since left the
+// route's set (backlog 2.144, match.go's MatchRoutes). The index
+// alert_escalations_alert_idx leads with (org_id, alert_id).
+func (q *Queries) ToldRoutesForAlert(ctx context.Context, arg ToldRoutesForAlertParams) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, toldRoutesForAlert, arg.OrgID, arg.AlertID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var route_id uuid.UUID
+		if err := rows.Scan(&route_id); err != nil {
+			return nil, err
+		}
+		items = append(items, route_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
