@@ -34,8 +34,16 @@
 - R12 Secrets and settings are validated by shape (Pushover 30 alnum, Twilio token 32 alnum, SID `AC`+32 hex, routing key 32 alnum, E.164 numbers); errors name the field, never the value.
 - R13 Migration 00137 drops and re-adds `notification_channels_preset_check` with the four new values (the 00133 pattern).
 - R14 Version skew as 4.7: an older manager sends new preset channels as raw JSON (refused by the service); stop every manager first.
+- R15 (review I1) The sender reads, for an `AlertStateAware` preset (PagerDuty), which of a batch's alerts are closed or gone at send time (`AlertStates`, org-scoped, wired by `internal/app`); PagerDuty resolves those whatever the event said. A failed read is transient. — Per-channel FIFO was the alternative: it keeps order but a stuck delivery blocks the channel for up to 2 h. — Cost if wrong: one indexed read per PagerDuty alert batch.
+- R16 (review I2) A delivery's requests share a budget of half the lease; a request starts only while the client timeout still fits. Unsent and failed requests are owed by `Request.Key` in the existing `pending_recipients` column (no migration); a retry sends only those, never one that succeeded. — Cost if wrong: a semantic overload of one column, documented on `Delivery.PendingRecipients`.
+- R17 (review M1) Every request is tried; the error names the failed ones (≤ 5, position and status only); permanent only when every owed request was refused permanently and none is unreached (R4 superseded). A single-request send keeps its plain semantics.
+- R18 (review M2) `SecretScoped`: Twilio's auth token belongs to `account_sid`; a new SID needs the token again (400 naming both), and the dialog requires the field once the SID differs.
+- R19 PagerDuty `ack_voided` (unacknowledged) sends nothing; a render with no request is a delivered message (was: a permanent failure). `unsnoozed` still triggers (deduplicated by PagerDuty, harmless).
+- R20 (review M3) Alerts beyond the batch cap get no PagerDuty event: documented, backlog 4.43. Twilio's segment arithmetic stays as ruled in R8 (an extension character at a segment edge can cost a third segment, rare).
 
 ## Review Focus
+
+- Review round 1: `TestPagerDutyOutageNeverReopensAClosedAlert`, `TestPagerDutyClosedNowResolves`, `TestPresetSendReadsAlertStatesAtSendTime`, `TestOpenAlertIDs` (alerts), `TestNotifyAlertStatesReportsWhatIsNotOpen` (app) for I1; `TestPresetSendResumesAfterTheBudget`, `TestDispatcherKeepsGoingPastASlowService` for I2; `TestPresetSendContinuesPastAFailure` for M1; `TestPresetSecretsFollowTheirScope`, `TestTwilioSecretBelongsToTheAccount`, API `TestNotifyChannelTwilioPreset` and the SPA "Twilio account change" test for M2; `TestPagerDutyUnacknowledgedSendsNothing`, `TestPresetSendNothingOrTooMuch`.
 
 - Secret leak: create/read/refusals carry no secret (`TestNotifyChannelPushoverPreset`, `TestNotifyChannelTwilioPreset`, `TestNotifyChannelPagerDutyPreset`), stored config has none in clear (`TestPresetSecretsSealedAndKept`), a refused secret's error has no value (`TestPushoverEndpointAndSecrets`, `TestTwilioEndpointAndSecret`, `TestPagerDutyRegion`, and the "refused" cases of the API tests).
 - Secret keep/rotation: omitted keeps, new replaces, preset change requires all again (`TestPresetSecretsSealedAndKept`).

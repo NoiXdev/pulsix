@@ -187,9 +187,8 @@ to the server root. So `Render` returns requests instead of bytes:
   (same scheme and host, so the outbound policy and the stored destination still decide where a
   request goes); `ContentType` defaults to `application/json`; `Header` is set after the operator's
   headers (the preset's own `Authorization` wins); X-Pulsix headers and signing apply to every
-  request. A delivery is sent when every request succeeded; the first failure fails the attempt
-  and a retry sends every request again (PagerDuty's `dedup_key` makes that idempotent; the
-  others render one request).
+  request. A delivery is sent when every request succeeded. (Review round 1 replaced the first
+  version's "first failure fails, a retry resends all": see "Review fixes" below.)
 - Two optional interfaces: `Endpointed` (`Endpoint(PresetSettings) string`) — Pulsix builds the
   URL from the settings, the operator submits none; `Credentialed` (`SecretNames() []string`,
   `CheckSecret(name, value string) error`) — secrets beyond the URL and headers.
@@ -245,6 +244,34 @@ SMS has no markup. The 40 KiB byte budget applies to every request body.
 
 As in 4.7: an older manager sends a new preset channel as the raw event JSON to the stored URL
 (the service refuses it) — stop every manager before the new version starts.
+
+### Review fixes (round 1, 2026-11-27)
+
+- **Alert state at send time (I1).** Deliveries are not ordered per channel, so after an outage
+  an alert's retried trigger could reach PagerDuty after its resolve and open an incident for a
+  closed alert. The sender now reads, for a preset that follows alert state
+  (`AlertStateAware`, PagerDuty only), which of the batch's alerts are closed — or gone with
+  their host — at send time (`AlertStates`, an org-scoped read of `alerts.closed_at` wired by
+  `internal/app`), and PagerDuty sends `resolve` for those whatever the event said. A failed
+  read is a transient error.
+- **A send budget and progress (I2).** A delivery's requests are bounded by half the lease (60 s);
+  a request is only started while its own timeout still fits, so none is cut off mid-flight. What
+  the budget does not reach is owed: the keys of the requests still owed (`Request.Key`; default
+  their position, PagerDuty `alert:<item index>`) are stored in the delivery's existing
+  `pending_recipients` column — the column that narrows an e-mail retry to the recipients still
+  owed (backlog 2.74) — and the retry sends only those. A request that succeeded is never sent
+  again (a resend of a failed delivery keeps the same narrowing). No migration.
+- **Every request is tried (M1).** One failed request no longer stops the rest. The error names
+  the failed ones by position and status ("request 3: the endpoint answered 400", at most five,
+  then a count; no URL, no secret). The retry owes the failed and unreached ones; when only
+  permanent refusals remain, the delivery fails permanently, like e-mail's partial semantics.
+- **Twilio's token belongs to its account (M2).** `SecretScoped`: changing `account_sid` needs
+  the auth token again (400: "changing account_sid needs the secret auth_token again"); the
+  dialog makes the field required as soon as the SID differs from the stored one.
+- **Unacknowledged sends nothing** to PagerDuty (a trigger would not undo its acknowledgement);
+  a batch that leaves nothing to send is delivered as sent.
+- **Known limit (M3):** alerts beyond a batch's cap of 50 get no PagerDuty event, so an incident
+  opened earlier for such an alert is not resolved by Pulsix (backlog 4.43).
 
 ### Out of scope (4.8)
 
