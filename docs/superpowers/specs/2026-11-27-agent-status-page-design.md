@@ -102,6 +102,14 @@ a customer-facing service status page; that is v0.5 (5.1–5.9).
    This changes what the manager receives, and it applies with or without the
    status page. Tests pin it for check values, check errors, probe results
    and facts.
+   **Narrowed by the owner on 2026-11-27:** the values of a fixed allowlist of
+   connection fields that are not secret are not replaced: `host`, `port`,
+   `user`, `username`, `database`, `socket`, `tls_server_name`, and the file
+   paths `tls_ca`, `tls_cert` and `tls_key`. The builder adds the other
+   plainly non-secret fields the agent's plugins read (`tls`, `pipe`,
+   `sslmode`, `sslrootcert`, `sslcert`, `sslkey`, `basic_auth_user`; one list,
+   `secrets.IsSecretField`). Any other field, an unknown one included, counts
+   as secret.
 
 ## Configuration
 

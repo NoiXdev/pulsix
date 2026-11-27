@@ -1454,24 +1454,37 @@ updated: update the agent first, then add `status_page:`. A new agent never refu
 for a mistake in that section; only the page stays off. The page is off unless the host's
 own `agent.yaml` turns it on; nothing the manager sends can. On a network address the agent
 keeps a self-signed certificate (`status-page.crt`, `status-page.key`, owner-only) in its
-data directory unless `tls_cert` and `tls_key` are set; deleting them makes it issue new ones.
+data directory unless `tls_cert` and `tls_key` are set; it replaces it 30 days before its end,
+and deleting both makes it issue new ones. A page without a token answers only requests
+addressed to `localhost`, a 127.x address or `[::1]` (421 otherwise), so a browser cannot be
+tricked into reading it under another name. A section without `listen` keeps the page off
+whatever else it holds; while `agent.yaml` is refused the card reads "failed" if the last good
+file turned the page on.
 
 ## Behaviour changes to check after an upgrade
 
 - **The agent replaces secret values before it sends anything (backlog 3.132, owner
-  decision, no migration):** every value of the agent's own `agent.yaml` secrets that is 4
-  characters or longer is replaced by `[secret]` in check results (item, label and error
-  text), probe results and host facts before they are buffered or sent, whether or not the
-  status page is on. The manager therefore stores `[secret]` where it used to store such a
-  value. Values that are common words or numbers are replaced too: a secret field holding
-  `localhost` or `5432` turns every `localhost` or `5432` in a check's item, label or error
-  and in the host's facts into `[secret]`, and an item renamed this way starts a new series
-  under its new name (its old one ages out as a vanished item). Keep values that are not
-  secret (host names, ports, user names) out of `secrets:` where they would collide, or
-  accept the replacement. Check keys and metric names are never changed, and the local
-  checks' parameters the heartbeat reports are sent as written. A value shorter than 4
-  characters is not replaced anywhere. While `agent.yaml` is refused, the values of the
-  last file that was read stay replaced; once the file is removed, nothing is.
+  decision, no migration):** every value of a secret field in the agent's own `agent.yaml`
+  that is 4 characters or longer is replaced by `[secret]` in check results (item, label and
+  error text), probe results and host facts before they are buffered or sent, whether or not
+  the status page is on; the manager therefore stores `[secret]` where it used to store such
+  a value. The connection fields that are not secret are left as they are (owner decision
+  of 2026-11-27): `host`, `port`, `user`, `username`, `database`, `socket`,
+  `tls_server_name`, `tls_ca`, `tls_cert`, `tls_key`, and the plugins' `tls`, `pipe`,
+  `sslmode`, `sslrootcert`, `sslcert`, `sslkey` and `basic_auth_user`
+  (`secrets.IsSecretField` holds the list). Every other field, `password`,
+  `basic_auth_password` and any unknown one included, counts as secret. A value that also
+  appears as ordinary text (a password that is a common word) is replaced wherever it
+  appears, which can rename an item: the item then starts a new series under its new name.
+  A result whose item or label grows past 512 bytes through the replacement is dropped (the
+  agent logs it, at most once a minute) rather than sent; an error text or a fact value is
+  cut back to its bound, and a text cut at its bound also loses a trailing start of a
+  secret value. Check keys and metric names are never changed. **The local checks'
+  parameters the heartbeat reports are sent as written** (a secret typed literally into a
+  check's params reaches the manager); the agent's status page shows them redacted, so this
+  one field can differ between the page and what the manager receives. A value shorter
+  than 4 characters is not replaced anywhere. While `agent.yaml` is refused, the values of
+  the last file that was read stay replaced; once the file is removed, nothing is.
 
 - **`PULSIX_PROBE_DENY_CIDRS` sees through IPv4-in-IPv6 forms (backlog 3.82, no
   migration):** a probe target whose IPv6 address embeds an IPv4 address in a denied
