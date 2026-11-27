@@ -11,6 +11,8 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+
+	"github.com/noixdev/pulsix/internal/inventory/render"
 )
 
 // Trigger kinds beyond manual and system.
@@ -248,15 +250,9 @@ func (s *Service) EnqueueRunWith(ctx context.Context, orgID, templateID uuid.UUI
 	if err := checkPin(tmpl, req); err != nil {
 		return nil, err
 	}
-	scope, err := parseScope(tmpl.Scope)
+	scope, gate, req, err := s.runScope(ctx, orgID, tmpl, req)
 	if err != nil {
 		return nil, err
-	}
-	gate := effectiveLimit(tmpl.Limit, req.Overrides)
-	if req.OnlyHost != nil {
-		if req, err = s.narrowToHost(ctx, orgID, gate, req); err != nil {
-			return nil, err
-		}
 	}
 	if !req.Overrides.check() {
 		// A dry run starts nothing after it, whatever the template's own
@@ -266,6 +262,25 @@ func (s *Service) EnqueueRunWith(ctx context.Context, orgID, templateID uuid.UUI
 		}
 	}
 	return s.enqueueRunScope(ctx, orgID, tmpl.ID, scope, gate, req, group, alreadyDone)
+}
+
+// runScope is what a run of tmpl reaches before its zones are resolved:
+// the template's parsed scope, the effective limit gating its zones
+// (req's overrides on the template's), and req narrowed to req.OnlyHost
+// when it names one (narrowToHost). EnqueueRunWith and the read-only
+// replay check (CheckRunReplay) share it.
+func (s *Service) runScope(ctx context.Context, orgID uuid.UUID, tmpl TemplateRow, req RunRequest) (render.Scope, string, RunRequest, error) {
+	scope, err := parseScope(tmpl.Scope)
+	if err != nil {
+		return render.Scope{}, "", req, err
+	}
+	gate := effectiveLimit(tmpl.Limit, req.Overrides)
+	if req.OnlyHost != nil {
+		if req, err = s.narrowToHost(ctx, orgID, gate, req); err != nil {
+			return render.Scope{}, "", req, err
+		}
+	}
+	return scope, gate, req, nil
 }
 
 // reserveRunGroup claims key for group (RunRequest.IdempotencyKey): it

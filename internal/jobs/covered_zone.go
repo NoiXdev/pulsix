@@ -93,15 +93,9 @@ func (s *Service) CheckRunReplay(ctx context.Context, orgID, templateID uuid.UUI
 		if err != nil {
 			return nil, err
 		}
-		scope, err := parseScope(tmpl.Scope)
+		scope, gate, req, err := s.runScope(ctx, orgID, tmpl, req)
 		if err != nil {
 			return nil, err
-		}
-		gate := effectiveLimit(tmpl.Limit, req.Overrides)
-		if req.OnlyHost != nil {
-			if req, err = s.narrowToHost(ctx, orgID, gate, req); err != nil {
-				return nil, err
-			}
 		}
 		targets, _, err := s.resolveRunTargets(ctx, orgID, scope, gate, req)
 		return targets, err
