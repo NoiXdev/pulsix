@@ -170,6 +170,14 @@ func TestNotifyChannelTwilioPreset(t *testing.T) {
 	if path != "/2010-04-01/Accounts/"+sid+"/Messages.json" || !ok || user != sid || pass != token || form.Get("To") != "+4915112345678" || !strings.HasPrefix(form.Get("Body"), "Test notification") {
 		t.Fatalf("sent %s %v %s", path, h, body)
 	}
+	// Another account needs its own auth token (review M2).
+	const otherSID = "AC1111111111111111111111111111111a"
+	resp := requestWithHeaders(t, f.adminC, http.MethodPut, f.channelsURL()+"/"+c.ID, map[string]any{"kind": "webhook", "name": "c twilio", "webhook": map[string]any{
+		"preset": "twilio", "account_sid": otherSID, "from": "+15005550006", "to": "+4915112345678",
+	}}, map[string]string{"If-Match": `"1"`})
+	if raw := mustReadBody(t, resp); resp.StatusCode != http.StatusBadRequest || !strings.Contains(raw, "changing account_sid needs the secret auth_token again") {
+		t.Fatalf("other account without token = %d %s", resp.StatusCode, raw)
+	}
 	refused48(t, f, "S3CRET", map[string]map[string]any{
 		"two recipients": {"preset": "twilio", "account_sid": sid, "from": "+15005550006", "to": "+4915112345678,+4915112345679", "secrets": map[string]string{"auth_token": token}},
 		"bad token":      {"preset": "twilio", "account_sid": sid, "from": "+15005550006", "to": "+4915112345678", "secrets": map[string]string{"auth_token": "S3CRET"}},
