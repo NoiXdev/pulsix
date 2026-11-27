@@ -346,4 +346,17 @@ func TestIngestReservationsPerKind(t *testing.T) {
 	if w, want := r.reserveIngest("s", ingestChecks, t0, checks.MaxTuplesPerHost), checks.MinInterval; w != want {
 		t.Fatalf("a probe refund reached the check bucket: waits %s, want %s", w, want)
 	}
+
+	// The other way round: spent probe budget leaves the checks' whole.
+	r2 := NewStreamRegistry()
+	if w := r2.reserveIngest("s", ingestProbes, t0, 2*checks.MaxTuplesPerHost); w != 0 {
+		t.Fatalf("a fresh probe bucket must hold the burst, waits %s", w)
+	}
+	if w := r2.reserveIngest("s", ingestChecks, t0, 2*checks.MaxTuplesPerHost); w != 0 {
+		t.Fatalf("spent probe budget delayed check results by %s", w)
+	}
+	r2.refundIngest("s", ingestChecks, checks.MaxTuplesPerHost)
+	if w, want := r2.reserveIngest("s", ingestProbes, t0, checks.MaxTuplesPerHost), checks.MinInterval; w != want {
+		t.Fatalf("a check refund reached the probe bucket: waits %s, want %s", w, want)
+	}
 }

@@ -62,6 +62,8 @@ type ingestKind uint8
 const (
 	ingestChecks ingestKind = iota
 	ingestProbes
+	// ingestKinds is how many kinds there are.
+	ingestKinds
 )
 
 func (k ingestKind) String() string {
@@ -145,6 +147,13 @@ func (r *StreamRegistry) refundIngest(serial string, kind ingestKind, n int) {
 type ingestPacer struct {
 	lastTouch time.Time
 
+	// logs is the throttle line's state per message type, so each type
+	// has its own once-a-minute line and counts.
+	logs [ingestKinds]throttleLog
+}
+
+// throttleLog is one message type's pacing since its last log line.
+type throttleLog struct {
 	lastLog       time.Time
 	logged        bool
 	waited        time.Duration
@@ -199,26 +208,28 @@ func (s *Service) pace(ctx context.Context, agent agents.AgentIdentity, p *inges
 	return nil
 }
 
-// noteThrottled counts one paced batch and logs at most once per
-// ingestThrottleLogEvery, the first at once, each line standing for what was
-// paced since the previous one.
+// noteThrottled counts one paced batch of kind and logs at most once per
+// ingestThrottleLogEvery per kind, the first at once, each line naming the
+// message type and standing for what of it was paced since its previous
+// line.
 func (p *ingestPacer) noteThrottled(s *Service, ctx context.Context, agent agents.AgentIdentity, kind ingestKind, wait time.Duration) {
-	p.waitedBatches++
-	p.waited += wait
+	l := &p.logs[kind]
+	l.waitedBatches++
+	l.waited += wait
 	now := s.deps.Clock()
-	if p.logged && now.Sub(p.lastLog) < ingestThrottleLogEvery {
+	if l.logged && now.Sub(l.lastLog) < ingestThrottleLogEvery {
 		return
 	}
 	log := s.deps.Log
 	if log == nil {
 		log = slog.Default()
 	}
-	log.WarnContext(ctx, "agent check results throttled by the ingest budget; delaying, not dropping",
-		"serial", agent.Serial, "org_id", agent.OrgID, "host_id", agent.HostID, "kind", kind.String(),
-		"throttled_batches", p.waitedBatches, "total_wait", p.waited,
+	log.WarnContext(ctx, "agent "+kind.String()+" throttled by the ingest budget; delaying, not dropping",
+		"serial", agent.Serial, "org_id", agent.OrgID, "host_id", agent.HostID,
+		"throttled_batches", l.waitedBatches, "total_wait", l.waited,
 		"refill_per_interval", ingestRefill, "interval", ingestRefillEvery, "burst", ingestBurst)
-	p.waitedBatches, p.waited = 0, 0
-	p.lastLog, p.logged = now, true
+	l.waitedBatches, l.waited = 0, 0
+	l.lastLog, l.logged = now, true
 }
 
 // sleepCtx waits d or until ctx ends, whichever is first; Deps.Sleep's
