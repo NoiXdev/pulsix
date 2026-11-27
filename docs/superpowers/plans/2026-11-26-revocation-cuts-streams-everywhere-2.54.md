@@ -1,0 +1,45 @@
+# A revocation cuts open event streams on every manager (backlog 2.54) — implementation plan
+
+**Goal:** within seconds of a worker revocation on any manager, every manager ends that worker's open `RunEvents` streams, not only the one that served the revocation. Today the others refuse only the worker's next RPC (`grpcsrv/auth.go` `lookupWorker`), so an open stream keeps appending events.
+
+**Architecture:** the revocation transaction (`workers.SQLStore.Revoke`) also runs `pg_notify('pulsix_worker_revoked', <worker id>)`, which Postgres delivers only on commit. Every manager with the worker endpoint runs a `workers.RevocationWatcher` loop: it holds one `LISTEN` session (on the advisory-lock pool), and for each notification asks the database which of the named workers with open streams here are revoked or gone, and closes their streams through the existing `grpcsrv.StreamRegistry.CloseWorker`. On every (re)connect and after every quiet `RescanEvery` it rescans all workers with open streams the same way, so a notification missed while the session was down is not lost and a silently dead session is noticed. No migration, no protocol or API change.
+
+**Spec:** backlog row 2.54 (`grep -nE "^\| 2\.54 " docs/BACKLOG.md`); context `internal/grpcsrv/streams.go`, `internal/grpcsrv/events.go`, `internal/workers/revoke.go`, backlog 2.57.
+
+## Global Constraints
+- Layers per `CLAUDE.md`: the watcher is logic behind interfaces (`RevocationFeed`, `RevocationSession`, `OpenStreams`) next to it in `internal/workers`; the LISTEN/NOTIFY and SQL live in the store file; `internal/app` wires them.
+- `go test -race -timeout 900s ./internal/{workers,grpcsrv,app}/...` (app narrowed with `-run`); never `go test ./...`, never `make test`, never `internal/e2e`. `golangci-lint run` and `gofmt -s -l` clean on touched packages.
+- sqlc via `make sqlc`; no hand edits of generated code. No migration.
+- TDD; Conventional Commits, footer `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
+
+## Rulings
+- **R1 LISTEN/NOTIFY, with a rescan as the safety net** — fastest (sub-second), and the rescan on (re)connect plus every `RescanEvery` covers a missed notification and a dead session. — Cost if wrong: a deployment where LISTEN cannot work falls back to "next RPC" only, as today.
+- **R2 LISTEN is safe in every supported deployment.** The docs name no connection pooler, and the manager already depends on session state: the advisory lockers (`schedule.AdvisoryLocker`, probe runner, backup) hold session-scoped `pg_try_advisory_lock`s, which a transaction-mode pooler (PgBouncer) breaks as surely as it breaks LISTEN. So no polling fallback mode. — Cost if wrong: behind a transaction pooler the listener receives nothing, and the periodic rescan (R5) still cuts streams within `RescanEvery`, because its query runs on the same session regardless.
+- **R3 NOTIFY inside the revocation transaction** (`NotifyWorkerRevoked` after `RevokeWorkerCertificates` in `SQLStore.Revoke`): delivered only on commit, never for a rolled-back revocation, and after the revoked row is visible. Payload: the worker id only. Channel `pulsix_worker_revoked`. — Cost if wrong: none; a duplicate (revoking twice) closes nothing new.
+- **R4 A notification is a hint; the database decides.** On a notification the watcher intersects the id with the workers that have open streams here (none → no query) and closes only those the database reports revoked or gone (`ListWorkersNotActive`). An unparsable payload triggers a full rescan. — Why: anyone who can NOTIFY can already write the table, but verifying costs one query per revocation per manager and makes a stray notification harmless. "Gone" counts like revoked because the interceptor refuses both (`ErrNotFound`). — Cost if wrong: one query per revocation.
+- **R5 Timing.** `RescanEvery` 30 s (each quiet wait ends with a rescan on the session, which doubles as its liveness check, bounded by a 10 s query timeout), reconnect after `RetryDelay` 5 s. A notification closes streams within well under a second; a session that died costs at most about 45 s (wait + query timeout + retry), never more than today's "next RPC". — Cost if wrong: a slower cut in a database outage only.
+- **R6 The session sits on the advisory-lock pool (`lockDB`), whose cap grows from 8 to 9.** It is a session held for the manager's lifetime like a lock; taken from `appDB` it would permanently remove one connection from request work (the backlog 3.92 lesson). The pool's AfterConnect sets the `pulsix_app` role; `workers` has no row-level security, so the rescan needs no org scope. — Cost if wrong: one more idle connection per manager.
+- **R7 The watcher runs only on a manager with the worker endpoint (`PULSIX_GRPC_LISTEN`)**, the only one that can hold worker streams. The serving manager's own `CloseWorker` stays in `Service.Revoke` (synchronous, before the requeue); its own notification then finds nothing to close.
+- **R8 Out of scope, recorded:** (a) on another manager a stray event can still land in the requeued job's log during the notification latency, because the serving manager requeues without waiting for the others; closing that needs an append-side check (the job still belongs to the worker), noted on backlog 2.57. (b) Agents' streams (`agentapi.StreamRegistry`) have the same in-process limit; not part of this row.
+- **R9 Mixed versions:** an older manager neither notifies nor listens. Its own streams end on revocations it serves and on the next RPC otherwise, as before; a revocation it serves sends no notification, so newer managers cut that worker's streams at their next rescan (≤ 30 s). Recorded in `docs/upgrades.md`.
+
+## Review Focus
+- Revoke on manager A, B's open stream for the worker closes; another worker's stream on B is untouched (`TestRevocationReachesAnotherManager`, internal/workers, real database both sides).
+- A revocation committed while B's session is down is caught by the rescan on reconnect (`TestRevocationWhileDisconnectedIsCaughtOnReconnect`), and a killed backend makes `Next` fail so the watcher reconnects (`TestRevocationSessionFailsWhenItsBackendDies`).
+- The notification arrives only after commit (`TestRevocationNotifiesOnCommitOnly`).
+- The loop's branches against fakes: hint verified, payload garbage → rescan, quiet wait → rescan, session error → close + reconnect, listen error → retry, ctx cancel → session closed (`TestRevocationWatcher*`, internal/workers).
+- `StreamRegistry.Workers` lists exactly the workers with open streams (`TestStreamRegistryWorkers`, internal/grpcsrv).
+
+## Task 1: Notify on revocation, the LISTEN feed and the watcher
+**Files:** `internal/db/queries/workers.sql` (+ sqlc), `internal/workers/store_sql.go`, `internal/workers/revocation_watch.go` (new), `internal/workers/revocation_feed_sql.go` (new), tests `internal/workers/revocation_watch_test.go`, `internal/workers/revocation_feed_sql_test.go`.
+- Queries: `NotifyWorkerRevoked :exec`, `ListWorkersNotActive :many`.
+- Interfaces: `RevocationFeed.Listen(ctx) (RevocationSession, error)`; `RevocationSession.Next(ctx, wait) (uuid.UUID, error)` (`uuid.Nil` = quiet or unparsable: rescan), `.NotActive(ctx, ids) ([]uuid.UUID, error)`, `.Close()`; `OpenStreams{ CloseWorker(uuid.UUID) int; Workers() []uuid.UUID }`; `NewRevocationWatcher(feed, streams, WatchConfig{RescanEvery, RetryDelay, QueryTimeout, Log})`, `(*RevocationWatcher).Run(ctx)`; `NewSQLRevocationFeed(*pgxpool.Pool)`.
+- Commit `feat(workers): every manager cuts a revoked worker's open streams`.
+
+## Task 2: Registry listing and wiring
+**Files:** `internal/grpcsrv/streams.go` (+ `streams_test.go`), `internal/app/app.go`.
+- `(*StreamRegistry).Workers() []uuid.UUID`; the watcher starts after the gRPC server is built, stops in `Close` before the pools close; `lockSessions` 9.
+- Commit `feat(app): run the revocation watcher next to the worker endpoint`.
+
+## Task 3: Docs
+- Backlog 2.54 → done; 2.57 notes the remaining cross-manager stray-event window; `docs/upgrades.md` mixed-version note. Commit `docs: backlog 2.54 done`.
