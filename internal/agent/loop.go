@@ -181,6 +181,8 @@ type Loop struct {
 
 	// utf8Warn rate-limits handleResults' warning about dropped results.
 	utf8Warn invalidUTF8Warner
+	// probeEvictWarn rate-limits the probe ring's overflow warning.
+	probeEvictWarn probeEvictWarner
 }
 
 // LoopOption overrides injected dependencies for tests.

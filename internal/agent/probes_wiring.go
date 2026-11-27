@@ -9,6 +9,7 @@ package agent
 
 import (
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -83,9 +84,47 @@ func newProbeBuffer(now func() time.Time) *checks.Ring[probes.Result] {
 		func(r probes.Result) time.Time { return r.At })
 }
 
-// logProbeEvictions reports what a Put on the probe ring dropped, why
-// (aged past the window, or over the size cap) and in which situation
-// (what), and nothing when it dropped nothing.
+// probeEvictWarnEvery is the least time between two warnings about probe
+// results the ring dropped while disconnected: at its cap the ring evicts
+// on almost every round (20 a second with 200 slots at 10 s), and one line
+// each would fill the host's journal, where the agent logs.
+const probeEvictWarnEvery = time.Minute
+
+// probeEvictWarner rate-limits that warning and sums what each line
+// covers. The probe sink runs on the runner's goroutines, so it guards
+// itself.
+type probeEvictWarner struct {
+	mu      sync.Mutex
+	last    time.Time
+	pending checks.Evicted // dropped since the last line that went out
+}
+
+// note adds e and reports whether a line is due now and what it covers:
+// the first drop at once, then at most one line per probeEvictWarnEvery.
+func (w *probeEvictWarner) note(now time.Time, e checks.Evicted) (covers checks.Evicted, due bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.pending.Aged += e.Aged
+	w.pending.OverCap += e.OverCap
+	if w.pending == (checks.Evicted{}) || (!w.last.IsZero() && now.Sub(w.last) < probeEvictWarnEvery) {
+		return checks.Evicted{}, false
+	}
+	covers, w.pending, w.last = w.pending, checks.Evicted{}, now
+	return covers, true
+}
+
+// flush takes what is pending without waiting for the period.
+func (w *probeEvictWarner) flush() checks.Evicted {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	covers := w.pending
+	w.pending = checks.Evicted{}
+	return covers
+}
+
+// logProbeEvictions reports what the probe ring dropped, why (aged past
+// the window, or over the size cap) and in which situation (what), and
+// nothing when it dropped nothing.
 func (l *Loop) logProbeEvictions(what string, e checks.Evicted, attrs ...any) {
 	if e.Aged+e.OverCap == 0 {
 		return
@@ -120,8 +159,10 @@ func (l *Loop) handleProbeResults(results []probes.Result) {
 		return
 	}
 	routeResults(l, "probe results", results, (*streamSender).sendProbeResultsChunked, func(rest []probes.Result) {
-		l.logProbeEvictions("probe result buffer overflowed while disconnected; oldest samples dropped",
-			l.probeBuffer.Put(rest))
+		if covers, due := l.probeEvictWarn.note(l.now(), l.probeBuffer.Put(rest)); due {
+			l.logProbeEvictions("probe result buffer overflowed while disconnected; oldest samples dropped",
+				covers, "every", probeEvictWarnEvery)
+		}
 	})
 }
 
@@ -130,6 +171,10 @@ func (l *Loop) handleProbeResults(results []probes.Result) {
 // not go out goes back (unsentAfter), and what the put-back evicts is
 // logged.
 func (l *Loop) replayProbeResults(sender *streamSender) error {
+	// What the rate-limited warning has not reported yet is reported now:
+	// the outage is over, and its count must not wait for the next one.
+	l.logProbeEvictions("probe results dropped while disconnected; oldest samples dropped",
+		l.probeEvictWarn.flush())
 	pending := l.probeBuffer.Drain()
 	sent, err := sender.sendProbeResultsChunked(pending)
 	if err == nil {

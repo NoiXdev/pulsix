@@ -18,6 +18,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/agent/checks"
 	"github.com/noixdev/pulsix/internal/agent/probes"
 	"github.com/noixdev/pulsix/internal/pb/agentpb"
 	"github.com/noixdev/pulsix/internal/probe"
@@ -372,16 +373,20 @@ func TestProbeBufferStaysUnderItsCapDuringALongDisconnect(t *testing.T) {
 
 	const slots, perRound, interval = 200, 5, 10 * time.Second
 	var last time.Time
-	for now = base; now.Before(base.Add(bufferWindow)); now = now.Add(interval) {
+	// Each slot's round has a timestamp of its own, as production dispatch
+	// spreads slots over the interval, so the cap evicts round by round and
+	// a cut inside a round would show.
+	for tick := base; tick.Before(base.Add(bufferWindow)); tick = tick.Add(interval) {
 		for s := range slots {
+			now = tick.Add(time.Duration(s) * interval / slots)
 			round := make([]probes.Result, perRound)
 			for i := range round {
 				round[i] = probes.Result{TargetHostID: probeTarget, CheckKey: "web" + strconv.Itoa(s),
 					Metric: "http.m" + strconv.Itoa(i), Value: floatPtr(1), At: now}
 			}
 			l.handleProbeResults(round)
+			last = now
 		}
-		last = now
 	}
 	held := l.probeBuffer.Drain()
 	cost := 0
@@ -426,5 +431,54 @@ func TestProbeResultCostCountsTheVariableText(t *testing.T) {
 	}
 	if probeResultCost(short) < 120 {
 		t.Fatalf("cost %d is below the result's own size", probeResultCost(short))
+	}
+}
+
+// TestProbeOverflowWarningIsRateLimited: at its cap the probe ring evicts
+// on almost every round, so the warning goes out at once and then at most
+// once per probeEvictWarnEvery, each line carrying what was dropped since
+// the previous one; a reconnect logs what was still pending.
+func TestProbeOverflowWarningIsRateLimited(t *testing.T) {
+	lt := newLoopTest(t)
+	base := time.Date(2026, 11, 26, 9, 0, 0, 0, time.UTC)
+	now := base
+	lt.setNow(func() time.Time { return now })
+	l := lt.newLoop()
+	one := manyProbeResults(1, base)[0]
+	l.probeBuffer = checks.NewCappedRing(bufferWindow, 10*probeResultCost(one), probeResultCost, l.now,
+		func(r probes.Result) time.Time { return r.At })
+	const msg = "probe result buffer overflowed"
+	round := func() {
+		now = now.Add(time.Second)
+		l.handleProbeResults(manyProbeResults(1, now))
+	}
+	for range 10 { // fills the ring exactly
+		round()
+	}
+	for range 30 { // each evicts one
+		round()
+	}
+	logs := lt.logOutput()
+	if n := strings.Count(logs, msg); n != 1 {
+		t.Fatalf("overflow lines after 30 evicting rounds in 30 s = %d, want 1:\n%s", n, logs)
+	}
+	for range 31 { // the minute since the first line passes on the last of these
+		round()
+	}
+	logs = lt.logOutput()
+	if n := strings.Count(logs, msg); n != 2 {
+		t.Fatalf("overflow lines after a minute = %d, want 2:\n%s", n, logs)
+	}
+	if !strings.Contains(logs, "over_cap=60 ") {
+		t.Fatalf("the second line does not carry the drops since the first:\n%s", logs)
+	}
+	round()
+	round()
+	if err := l.activateSender(newStreamSender(&chunkingStream{})); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(lt.logOutput(), "probe results dropped while disconnected") ||
+		!strings.Contains(lt.logOutput(), "over_cap=2 ") {
+		t.Fatalf("the reconnect did not log the drops still pending:\n%s", lt.logOutput())
 	}
 }
