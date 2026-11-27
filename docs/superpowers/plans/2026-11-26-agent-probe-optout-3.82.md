@@ -32,14 +32,14 @@
 ## Review Focus
 - A typo cannot turn probing back on: `TestLoopRefusedFileTurnsProbingOff` (agent).
 - An opted-out agent probes nothing and says so: `TestLoopOptOutStopsProbingAndReportsIt`, `TestRunnerDisabledRefusesApply`, `TestRunnerReenableForgetsVersion` (agent/probes).
-- Every dial path honours the deny list: `TestGuardLocalDeny` (literal, mapped, NAT64-embedded), `TestResolveAllowedLocalDeny` (a name resolving to a denied address), `TestHTTPLocalDenyOnRedirect`, `TestHTTPLocalDenyOnName`, tcp/tls/icmp/dns refusal rows; `TestRunnerAppliesTheLocalDeny` (agent/probes, through the runner).
+- Every dial path honours the deny list: `TestGuardLocalDeny` (literal, mapped, NAT64-embedded), `TestResolveAllowedLocalDeny` (a name resolving to a denied address), `TestHTTPLocalDeny` (redirect, name), `TestTCPLocalDeny`, `TestTLSLocalDeny`, `TestICMPLocalDeny`, `TestDNSLocalDenyServer`, `TestDNSDialLocalRefusalIsAnError`; `TestRunnerAppliesTheLocalDeny` (agent/probes, through the runner); `TestLoopDenyListReachesTheProbes` (agent).
 - The refusal never names the list: every assertion compares the fixed text.
 - Parsing: `TestParseProbes` (accepts) and `TestParseRefusesProbes` (table, no entry quoted).
 
 ## Task 1: Guard: local deny list, fixed refusal text, embedded forms (`internal/probe`, `internal/outbound`)
 - `outbound.Policy.EmbeddedIPv4(a)`; `probe.ErrLocalPolicy`, `(*Guard).WithLocalDeny(prefixes)`, `(*Guard).Check(ip) error`, `probe.RefusalText(err)`, `probe.Refusal` (concurrency-safe recorder for http/dns); deny lists judged on the embedded IPv4 too; `ResolveAllowed` returns `ErrLocalPolicy` when a candidate was refused only locally.
 - Probes: tcp, tls, http, icmp, dns report `RefusalText`.
-- Tests: `TestGuardLocalDeny`, `TestGuardDenySeesThroughEmbeddedIPv4`, `TestResolveAllowedLocalDeny`, `TestRefusalText`, per-probe local-deny rows.
+- Tests: `TestGuardLocalDeny`, `TestGuardDenySeesThroughEmbeddedIPv4`, `TestGuardDialerReportsTheLocalRefusal`, `TestResolveAllowedLocalDeny`, `TestRefusalText`, `TestRefusalRecorder`, `TestEmbeddedIPv4` (outbound), per-probe local-deny tests.
 - [ ] Commit `feat(probe): a local deny list with its own refusal text`.
 
 ## Task 2: `probes:` in `agent.yaml` (`internal/agent/secrets`)
@@ -50,12 +50,12 @@
 ## Task 3: Runner policy and loop wiring (`internal/agent/probes`, `internal/agent`)
 - `Runner.SetPolicy(enabled bool, guard *probe.Guard)`, `Runner.Enabled()`, `Apply` returns false while disabled; the guard is read per dispatch.
 - Loop: `applyProbePolicy(set, state)` in `lookAndApplyLocal`; heartbeat `ProbesSupported: l.probes.Enabled()`; `applyProbeConfig` logs a refused push.
-- Tests: `TestRunnerDisabledRefusesApply`, `TestRunnerReenableForgetsVersion`, `TestRunnerAppliesTheLocalDeny`; `TestLoopOptOutStopsProbingAndReportsIt`, `TestLoopRefusedFileTurnsProbingOff`.
+- Tests: `TestRunnerDisabledRefusesApply`, `TestRunnerReenableForgetsVersion`, `TestRunnerDisabledDiscardsTheInFlightRound`, `TestRunnerUsesThePolicysGuard`, `TestRunnerAppliesTheLocalDeny`; `TestLoopOptOutStopsProbingAndReportsIt`, `TestLoopRefusedFileTurnsProbingOff`, `TestProbePolicyOf`, `TestLoopDenyListReachesTheProbes`.
 - [ ] Commit `feat(agent): agent.yaml turns probing for other hosts off or narrows it`.
 
 ## Task 4: Agent card (`internal/agents`, `internal/api`, SPA)
 - `Agent.ProbesSupported` from the row; `agentDTO.ProbesSupported`; `schema.d.ts` regenerated; `HostAgentCard` row, i18n en/de.
-- Tests: API DTO test, `HostAgentCard.test.tsx`.
+- Tests: `TestAgentDTOReportsProbesSupported` (api), `TestProbesSupportedAndOnlineCapableAgents` (agents, read path), `HostAgentCard.test.tsx` ("probes for other hosts").
 - [ ] Commit `feat(web): the agent card shows whether the agent probes other hosts`.
 
 ## Task 5: Docs

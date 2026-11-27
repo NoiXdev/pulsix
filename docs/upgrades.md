@@ -1398,8 +1398,29 @@ they fail permanently, and an update through it neither sees nor checks the pres
 manager instance before the new version starts. A downgrade needs the usual restore of a backup
 from before the upgrade.
 
+An agent-side probe opt-out and deny list (backlog 3.82) add no migration, no proto change
+and no dependency: `host_agents.probes_supported` and `Heartbeat.probes_supported` exist since
+3.13a. `agent.yaml` gains a `probes:` section (`enabled: false` makes the agent report that it
+does not probe, so it is never assigned; `deny_cidrs:` lists ranges its probes refuse). The
+agent DTO gains `probes_supported` (additive). **The `probes:` key is stricter for an older
+agent:** an agent older than this release does not know the key and refuses the whole file,
+so a host whose `agent.yaml` gains `probes:` also loses its `secrets:`, `commands:` and
+`checks:` until that agent is updated. Update the agent first, then add `probes:`. A new agent
+under an older manager opts out the same way (the manager reads the 3.13a flag), and its
+refusals arrive as an error text on the vantage; an older manager returns no
+`probes_supported` on the agent read, so the card shows "no" for every agent until the
+manager is updated. A new agent whose `agent.yaml` is refused for any reason now stops
+probing for other hosts until the file is fixed (it used to keep probing).
+
 ## Behaviour changes to check after an upgrade
 
+- **`PULSIX_PROBE_DENY_CIDRS` sees through IPv4-in-IPv6 forms (backlog 3.82, no
+  migration):** a probe target whose IPv6 address embeds an IPv4 address in a denied
+  range — NAT64 (`64:ff9b::/96` and the prefixes in `PULSIX_NOTIFY_NAT64_PREFIXES`),
+  6to4, SIIT, Teredo, ISATAP — is now refused like the IPv4 address itself, as the
+  built-in refusals always were. A check that reached a denied IPv4 network through a
+  NAT64 gateway reads "target address not allowed" from now on. The same applies to an
+  agent's own `probes.deny_cidrs`.
 - **Container resource usage on the docker check (backlog 3.12a, no migration):**
   a new option `resources` (off by default; existing checks are unchanged) makes the
   agent read each running or paused container's CPU, memory, network and block I/O
