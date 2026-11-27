@@ -272,7 +272,7 @@ export const deHosts: Messages['hosts'] = {
     pin: 'Host-Schlüssel anheften',
     pinned: 'Host-Schlüssel angeheftet',
     pinFailed: 'Anheften fehlgeschlagen',
-    unpin: 'Lösen',
+    unpin: 'Anheftung lösen',
     unpinned: 'Anheftung des Host-Schlüssels gelöst',
     unpinFailed: 'Die Anheftung konnte nicht gelöst werden',
   },
@@ -386,7 +386,7 @@ export const deHosts: Messages['hosts'] = {
     noAccess: 'Die Überwachung ist für Mitglieder dieser Organisation sichtbar.',
     readFailed: 'Die Checks dieses Hosts konnten nicht gelesen werden.',
     notMonitored:
-      'Dieser Host wird nicht überwacht. Diese Checks werden erst gemessen, wenn die Fähigkeit „Überwacht“ aktiv ist – sie sind die Menge, die dann gelten würde.',
+      'Dieser Host wird nicht überwacht. Gemessen werden diese Checks erst, wenn die Fähigkeit „Überwacht“ aktiv ist – sie zeigen, was dann gelten würde.',
     clockSkew: (skew: string) =>
       `Die Uhr dieses Hosts geht gegenüber der des Managers etwa ${skew}. Messwerte tragen die eigenen Zeitstempel des Hosts, daher kann ein „veraltet“-Hinweis unten an der Uhr liegen statt an einem Host, der nicht mehr meldet – die Zeitsynchronisierung prüfen.`,
     none: 'Für diesen Host sind noch keine Checks aufgelöst.',
@@ -430,13 +430,13 @@ export const deHosts: Messages['hosts'] = {
     graphFor: (key: string, name: string) => `Diagramm ${key} ${name}`,
     whyIgnored: 'Warum ignoriert',
     whyWatched: 'Warum überwacht',
-    originUnknown: 'Herkunft unbekannt – das letzte Lesen dieses Werts nannte keine zugrunde liegende Entscheidung.',
+    originUnknown: 'Herkunft unbekannt – beim letzten Auslesen dieses Werts war keine Entscheidung dazu angegeben.',
     originOrg: (pattern: string) => `Durch das Organisationsmuster \`${pattern}\``,
     originHost: 'Für diesen Host festgelegt',
     viaPlugin: 'über die Entscheidung des Plugins',
   },
   rules: {
-    title: 'Regeln für entfernte Elemente',
+    title: 'Regeln für nicht mehr gemeldete Elemente',
     noAccess: 'Regeln sind für Mitglieder dieser Organisation sichtbar.',
     readFailed: 'Die wirksamen Regeln dieses Hosts konnten nicht gelesen werden.',
     none: 'Keine Regel zielt auf ein Element, das dieser Host nicht mehr meldet.',

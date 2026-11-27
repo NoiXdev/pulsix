@@ -186,7 +186,7 @@ export const deRuns: Messages['runs'] = {
     },
     cancelledRun: 'Abgebrochener Lauf',
     unconfirmedBefore:
-      'Pulsix kann nicht bestätigen, dass der Abbruch das Play gestoppt hat: Der Worker, der den Lauf ausgeführt hat, folgt einem abgebrochenen Lauf unter Umständen nur nicht mehr, und das Playbook läuft dann möglicherweise weiter gegen ',
+      'Pulsix kann nicht bestätigen, dass der Abbruch das Play gestoppt hat: Der Worker, der den Lauf ausgeführt hat, stoppt bei einem Abbruch unter Umständen nicht das Play, sondern verfolgt es nur nicht weiter; das Playbook läuft dann möglicherweise weiter gegen ',
     unconfirmedStrong: 'jeden unten aufgeführten Host',
     unconfirmedAfter:
       ', auch gegen Hosts ohne aktiven Task. Ein auf einem Host bereits gestarteter Befehl läuft in jedem Fall weiter. Diese Liste zeigt den letzten Stand, den Pulsix gesehen hat, und keine endgültige Bilanz: vor einem erneuten Lauf die Hosts prüfen, sonst könnten zwei Läufe denselben Host gleichzeitig ändern.',

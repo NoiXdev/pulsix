@@ -48,7 +48,7 @@ export const deSettings: Messages['settings'] = {
     retentionDefault: (days: number) => `Instanz-Standard (${days} Tage)`,
     retentionDays: (days: number) => `${days} Tage`,
     retentionAboveMax: (days: number) => `Die Instanz behält höchstens ${days} Tage`,
-    retentionHint: 'Wie lange Messwerte und Statusverlauf dieser Organisation aufbewahrt werden. Das vom Betreiber gesetzte Instanz-Maximum begrenzt die Auswahl.',
+    retentionHint: 'Wie lange Messwerte und Statusverlauf dieser Organisation aufbewahrt werden. Das für die Instanz festgelegte Maximum begrenzt die Auswahl.',
     retentionLowerWarning: (days: number) => `Messwerte und Statusverlauf, die älter als ${days} Tage sind, werden innerhalb einer Stunde gelöscht.`,
     retentionLowerTitle: 'Ältere Messwerte löschen?',
     readOnlyHint: 'Nur Inhaber und Admins können die Überwachungseinstellungen ändern.',

@@ -10,7 +10,7 @@ export const deTriggers: Messages['triggers'] = {
   createFailed: 'Der Trigger konnte nicht erstellt werden',
   secretOnce: 'Wird nur einmal angezeigt – jetzt beim Sender hinterlegen',
   copySecret: 'Secret kopieren',
-  stored: 'Secret ist hinterlegt',
+  stored: 'Ich habe das Secret hinterlegt',
   secretPlaceholder: '<das Secret des Triggers>',
   enabled: 'aktiviert',
   disabled: 'deaktiviert',

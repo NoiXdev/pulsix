@@ -59,7 +59,7 @@ export const deCredentials: Messages['credentials'] = {
   add: {
     installTitle: 'Öffentlichen Schlüssel installieren',
     installHint:
-      'Der private Schlüssel bleibt in Pulsix versiegelt und wird nie angezeigt. Diesen öffentlichen Schlüssel dort installieren, wo sich die Zugangsdaten anmelden.',
+      'Der private Schlüssel bleibt in Pulsix versiegelt und wird nie angezeigt. Diesen öffentlichen Schlüssel bei dem Konto installieren, an dem sich Pulsix mit diesen Zugangsdaten anmeldet.',
     done: 'Fertig',
     title: 'Zugangsdaten hinzufügen',
     kind: 'Art',

@@ -17,7 +17,7 @@ export const deSchedules: Messages['schedules'] = {
     schedule: 'Zeitplan',
     template: 'Vorlage',
     cron: 'Cron',
-    next: 'Nächste',
+    next: 'Nächster Lauf',
     notify: 'Meldung bei',
     last: 'Zuletzt',
   },

@@ -66,7 +66,7 @@ export const deAccount: Messages['account'] = {
     regenerateConfirmLabel: 'Neu erzeugen',
     dialogTitle: 'Wiederherstellungscodes',
     regenerateFailed: 'Die Wiederherstellungscodes konnten nicht neu erzeugt werden.',
-    shownOnce: 'Wiederherstellungscodes – werden nur einmal angezeigt. Jeder gilt nur einmal.',
+    shownOnce: 'Diese Codes werden nur einmal angezeigt. Jeder gilt nur einmal.',
     saved: 'Ich habe sie gespeichert',
   },
   password: {
@@ -79,7 +79,7 @@ export const deAccount: Messages['account'] = {
     changed: 'Passwort geändert. Die anderen Sitzungen wurden abgemeldet.',
     invalidCurrent: 'Das aktuelle Passwort ist nicht richtig.',
     invalidTemporary: 'Das temporäre Passwort ist nicht richtig.',
-    temporaryExpired: 'Das temporäre Passwort ist abgelaufen. Einen Instanz-Administrator um ein neues bitten.',
+    temporaryExpired: 'Das temporäre Passwort ist abgelaufen. Für ein neues bitte an die Instanz-Administration wenden.',
     sameAsCurrent: 'Das neue Passwort muss sich vom aktuellen unterscheiden.',
     sameAsTemporary: 'Das neue Passwort muss sich vom temporären unterscheiden.',
     failed: 'Das Passwort konnte nicht geändert werden.',
@@ -87,7 +87,7 @@ export const deAccount: Messages['account'] = {
   forced: {
     title: 'Neues Passwort wählen',
     intro: (email: string) =>
-      `Ein Administrator hat ein temporäres Passwort für ${email} gesetzt. Zum Fortfahren ein eigenes Passwort wählen.`,
+      `Für ${email} wurde ein temporäres Passwort gesetzt. Zum Fortfahren ein eigenes Passwort wählen.`,
     signOut: 'Abmelden',
   },
   stepUp: {

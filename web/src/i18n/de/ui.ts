@@ -29,7 +29,7 @@ export const deUi: Messages['ui'] = {
     daySelected: (day: string) => `${day}, ausgewählt`,
   },
   query: {
-    signingOutTitle: 'Abmeldung',
+    signingOutTitle: 'Abmeldung läuft',
     signingOutDetail: 'Die Sitzung ist abgelaufen. Weiterleitung zur Anmeldung…',
     forbiddenTitle: 'Kein Zugriff',
     forbiddenDetail: 'Jemand mit der Rolle Inhaber oder Admin in der Organisation kann den Zugriff auf diese Seite freigeben.',

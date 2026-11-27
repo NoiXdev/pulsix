@@ -155,7 +155,7 @@ export const deInstance: Messages['instance'] = {
         phpfpm: 'PHP-FPM',
         script: 'Eigenes Skript',
       },
-      hint: 'Wird in jede Organisation mit der Standardbindung für die ganze Organisation und aktiviert projiziert – jede Organisation kann sie auf ihrer eigenen Check-Seite an eine Überwachungsgruppe oder einen Host binden oder deaktivieren; beides wird hier nicht festgelegt.',
+      hint: 'Wird in jede Organisation projiziert, organisationsweit gebunden und aktiviert – jede Organisation kann sie auf ihrer eigenen Check-Seite an eine Überwachungsgruppe oder einen Host binden oder deaktivieren; beides wird hier nicht festgelegt.',
       saved: (plugin: string) => `Check-Definition ${plugin} gespeichert`,
       created: (plugin: string) => `Check-Definition ${plugin} angelegt`,
     },

@@ -5,13 +5,13 @@ export const deSetup: Messages['setup'] = {
   intro: 'Läuft nur einmal. Danach entfällt diese Seite, und alles geschieht innerhalb der Organisation.',
   stepOf: (n: number, total: number) => `Schritt ${n} von ${total}`,
   steps: {
-    admin: { label: 'Instanzadministrator', sub: 'E-Mail-Adresse und Passwort' },
+    admin: { label: 'Instanz-Admin', sub: 'E-Mail-Adresse und Passwort' },
     org: { label: 'Erste Organisation', sub: 'Name und URL-Slug' },
     smtp: { label: 'Ausgehende E-Mails', sub: 'optional, später nachholbar' },
     mfa: { label: 'Zweiter Faktor', sub: 'Authenticator-App oder Passkey' },
   },
   admin: {
-    title: 'Instanzadministrator anlegen',
+    title: 'Instanz-Admin anlegen',
     name: 'Name',
     repeatPassword: 'Passwort wiederholen',
     token: 'Setup-Token',
@@ -31,9 +31,9 @@ export const deSetup: Messages['setup'] = {
   mfa: {
     title: 'Zweiten Faktor jetzt einrichten',
     intro:
-      'Als Nächstes wird das Konto des Instanzadministrators angelegt. Direkt danach muss eine Authenticator-App oder ein Passkey hinzugefügt werden – jedes Konto braucht einen zweiten Faktor, bevor es etwas anderes tun kann.',
+      'Als Nächstes wird das Instanz-Admin-Konto angelegt. Direkt danach muss eine Authenticator-App oder ein Passkey hinzugefügt werden – jedes Konto braucht einen zweiten Faktor, bevor es etwas anderes tun kann.',
     creating: 'Wird angelegt…',
-    create: 'Administrator anlegen und fortfahren',
+    create: 'Instanz-Admin anlegen und fortfahren',
   },
   failed: 'Einrichtung konnte nicht abgeschlossen werden',
 };

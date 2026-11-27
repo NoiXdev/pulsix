@@ -79,7 +79,7 @@ export const deAlerts: Messages['alerts'] = {
     ackVoided: 'Quittierung durch einen schlechteren Schweregrad ungültig geworden',
     snoozed: 'Zurückgestellt',
     unsnoozed: 'Zurückstellung aufgehoben',
-    closedStale: 'Geschlossen – veraltet (das überwachte Objekt existiert nicht mehr)',
+    closedStale: 'Geschlossen – veraltet (das überwachte Ziel existiert nicht mehr)',
     closedResolved: 'Geschlossen – behoben (das Tupel ist wieder in Ordnung)',
     closedForgotten: 'Geschlossen – vergessen (das Element meldet nicht mehr und wurde vergessen)',
     escalatedTo: (position: number) => `Auf Stufe ${position} eskaliert`,

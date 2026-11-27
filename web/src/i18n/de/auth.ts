@@ -24,7 +24,7 @@ export const deAuth: Messages['auth'] = {
     submit: 'Link senden',
     sent: 'Falls zu dieser Adresse ein Konto existiert, haben wir einen Link dorthin geschickt. Der Link gilt einmal, für 60 Minuten.',
     unavailable:
-      'Das Zurücksetzen per E-Mail ist auf dieser Instanz nicht verfügbar. Bitte einen Instanz-Administrator bitten, ein temporäres Passwort zu setzen.',
+      'Das Zurücksetzen per E-Mail ist auf dieser Instanz nicht verfügbar. Für ein temporäres Passwort bitte an die Instanz-Administration wenden.',
     checkFailed: 'Es konnte nicht geprüft werden, ob ein Link verschickt werden kann. Später erneut versuchen.',
     failed: 'Die Anfrage konnte nicht gesendet werden. Erneut versuchen.',
     backToSignIn: 'Zurück zur Anmeldung',
