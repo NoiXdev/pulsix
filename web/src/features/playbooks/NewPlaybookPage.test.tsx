@@ -156,7 +156,7 @@ describe('NewPlaybookPage', () => {
     await pickOption(screen, 'Playbook', 'playbooks/site.yml');
     await user.click(screen.getByRole('button', { name: 'Create' }));
     await waitFor(() => expect(router.state.location.pathname).toBe('/o/acme/playbooks/p2'));
-    expect(await screen.findByText('This playbook was already added — here is its page.')).toBeInTheDocument();
+    expect(await screen.findByText('This playbook was already added – here is its page.')).toBeInTheDocument();
   });
 
   it('points to adding a repository when there is none', async () => {

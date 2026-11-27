@@ -29,9 +29,9 @@ describe('a job withdrawn at its claim', () => {
     mock();
     renderRunPage(ID);
     await screen.findByText('deploy-site');
-    expect(within(screen.getByRole('complementary')).getByText('Not run — approval withdrawn')).toBeInTheDocument();
+    expect(within(screen.getByRole('complementary')).getByText('Not run – approval withdrawn')).toBeInTheDocument();
     const sibling = screen.getByRole('link', { name: SIBLING.slice(0, 8) });
-    expect(within(sibling).getByText('Not run — approval withdrawn')).toBeInTheDocument();
+    expect(within(sibling).getByText('Not run – approval withdrawn')).toBeInTheDocument();
     expect(screen.queryByText('error')).not.toBeInTheDocument();
     expect(screen.getByRole('alert')).toHaveTextContent("refused at claim: the run's request is not approved");
   });

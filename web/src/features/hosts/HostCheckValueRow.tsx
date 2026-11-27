@@ -300,7 +300,7 @@ export function HostCheckValueRow({
             {decidedBy ? (
               <>
                 {decisionOriginLabel(decidedBy, t, check.key)}
-                {decidedBy.note && ` — ${decidedBy.note}`}
+                {decidedBy.note && ` – ${decidedBy.note}`}
               </>
             ) : (
               t.hosts.value.originUnknown

@@ -11,6 +11,6 @@ export const enRoutes = {
     title: 'Set up a second factor',
     signedInAs: (email: string) => `Signed in as ${email}.`,
     intro:
-      'Every account needs an authenticator app or a passkey before it can work inside an organization — add one now to continue.',
+      'Every account needs an authenticator app or a passkey before it can work inside an organization – add one now to continue.',
   },
 };

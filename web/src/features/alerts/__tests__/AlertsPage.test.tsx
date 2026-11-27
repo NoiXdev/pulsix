@@ -632,7 +632,7 @@ describe('AlertsPage', () => {
     // timeline; the row itself renders neither, so these prove the panel
     // and not the row.
     await within(dialog).findByText('Alert opened');
-    expect(within(dialog).getByText(/Closed — resolved/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Closed – resolved/)).toBeInTheDocument();
 
     // A mouse or touch user can close it: the dialog has no other control.
     await user.click(within(dialog).getByRole('button', { name: 'Close' }));

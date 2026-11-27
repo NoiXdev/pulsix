@@ -46,8 +46,8 @@ export const enUi = {
     failedDetail: 'An unexpected error occurred. Please try again.',
   },
   guard: {
-    loadMoreFailed: 'Could not load more — showing what is already loaded.',
-    refreshFailed: 'Could not refresh this page — showing the last loaded data.',
+    loadMoreFailed: 'Could not load more – showing what is already loaded.',
+    refreshFailed: 'Could not refresh this page – showing the last loaded data.',
   },
   confirm: {
     title: 'Are you sure?',

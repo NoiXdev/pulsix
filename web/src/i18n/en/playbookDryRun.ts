@@ -5,7 +5,7 @@ export const enPlaybookOutline = {
   go: (line: number, name: string) => `Line ${line}: ${name}`,
   goReal: (line: number, name: string) => `Line ${line}: ${name} (runs for real in a dry run)`,
   line: (n: number) => `L${n}`,
-  real: 'check_mode: false — runs for real in a dry run',
+  real: 'check_mode: false – runs for real in a dry run',
   unnamed: '(unnamed)',
   /** An entry the server sends without a name, by its kind. */
   unnamedKind: {

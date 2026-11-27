@@ -288,7 +288,7 @@ function StandIns({
               <li key={e.id} className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
                 <span className="truncate">
                   {r8.standsIn(channels.find((c) => c.id === e.channel_id)?.name ?? e.channel_id.slice(0, 8), fmt.dateTime(e.starts_at), fmt.dateTime(e.ends_at))}
-                  {e.note ? ` — ${e.note}` : ''}
+                  {e.note ? ` – ${e.note}` : ''}
                 </span>
                 {canWrite && (
                   <Button type="button" variant="ghost" aria-label={r8.removeStandInAria(channels.find((c) => c.id === e.channel_id)?.name ?? e.channel_id.slice(0, 8))} onClick={() => void onRemove(e.id)}>

@@ -26,7 +26,7 @@ export const enPlaybooks = {
     },
     sourceRepo: 'repo',
     sourceEditor: 'editor',
-    empty: 'No playbooks yet — add a repository and sync it, or write one in the editor.',
+    empty: 'No playbooks yet – add a repository and sync it, or write one in the editor.',
     unnamed: '(unnamed play)',
   },
   editor: {
@@ -37,7 +37,7 @@ export const enPlaybooks = {
     deleted: 'Playbook deleted',
     deleteFailed: 'Deleting failed',
     yaml: 'Playbook YAML',
-    ready: 'Parses as a list of plays — ready to save.',
+    ready: 'Parses as a list of plays – ready to save.',
     saveShortcut: 'Save (Ctrl+S or ⌘S)',
   },
   page: {
@@ -149,7 +149,7 @@ export const enPlaybooks = {
     notRead: 'could not be read',
     leftOut: 'left out by a limit',
     fields: (n: number) => (n === 1 ? '1 variable' : `${n} variables`),
-    alreadyRegistered: 'This playbook was already added — here is its page.',
+    alreadyRegistered: 'This playbook was already added – here is its page.',
   },
   validate: {
     tooLarge: 'playbook exceeds 512 KiB',

@@ -192,7 +192,7 @@ describe('AlertTimeline — why the alert fired (backlog 3.13b)', () => {
       />,
     );
     const details = screen.getAllByTestId('timeline-entry').map((e) => e.querySelector('[data-testid="timeline-detail"]')?.textContent ?? null);
-    expect(details).toEqual(['json("$.ok") == "true" — saw absent', null, 'certificate did not verify', null]);
+    expect(details).toEqual(['json("$.ok") == "true" – saw absent', null, 'certificate did not verify', null]);
   });
 });
 

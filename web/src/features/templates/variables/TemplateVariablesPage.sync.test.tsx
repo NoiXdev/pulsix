@@ -61,7 +61,7 @@ describe('TemplateVariablesPage — sync now', () => {
       'POST /api/v1/orgs/acme/job-templates/t1/variables/apply': () => status(409),
     });
     await user.click(within(dialog).getByRole('button', { name: 'Apply' }));
-    expect(await within(dialog).findByText('The source changed — preview again')).toBeInTheDocument();
+    expect(await within(dialog).findByText('The source changed – preview again')).toBeInTheDocument();
     expect(within(dialog).getByRole('button', { name: 'Preview again' })).toBeInTheDocument();
   });
 

@@ -375,7 +375,7 @@ describe('why an alert fired (backlog 3.13b)', () => {
     render(<AlertRow alert={{ ...http, detail: 'status in 200..299 — saw 503' }} />);
     const cell = screen.getByTestId('alert-host');
     expect(cell).toHaveTextContent('web · ok · http.assertion');
-    expect(within(cell).getByTestId('alert-detail')).toHaveTextContent('status in 200..299 — saw 503');
+    expect(within(cell).getByTestId('alert-detail')).toHaveTextContent('status in 200..299 – saw 503');
   });
 
   it('shows nothing without a detail', () => {
@@ -398,11 +398,11 @@ describe('why an alert fired (backlog 3.13b)', () => {
 
   it.each([
     ['timeout', 'timed out'],
-    ['status == 200 — saw 503', 'status == 200 — saw 503'],
+    ['status == 200 — saw 503', 'status == 200 – saw 503'],
     ['saw (hidden)', 'saw (hidden)'],
     ['status == 200', 'status == 200'],
     // The value seen comes from the site and may hold the separator.
-    ['body contains "a — saw b" — saw "x — saw y"', 'body contains "a — saw b" — saw "x — saw y"'],
+    ['body contains "a — saw b" — saw "x — saw y"', 'body contains "a — saw b" – saw "x — saw y"'],
     ['something else', 'something else'],
   ])('detailText words %j', (detail, want) => {
     expect(detailText(detail, en)).toBe(want);

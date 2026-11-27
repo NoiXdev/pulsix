@@ -135,7 +135,7 @@ describe('MaintenancePage', () => {
     renderPage();
     await chooseRowAction(user, 'mute disk', 'Edit');
     const dialog = screen.getByRole('dialog', { name: 'Edit mute disk' });
-    expect(within(dialog).getByLabelText('Why')).toHaveValue('Silence — do not raise alerts; scheduled runs are unaffected');
+    expect(within(dialog).getByLabelText('Why')).toHaveValue('Silence – do not raise alerts; scheduled runs are unaffected');
     await user.click(within(dialog).getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(put?.body.reason).toBe('silence'));
   });

@@ -66,7 +66,7 @@ test('an admin creates a maintenance window, turns it into a silence, and delete
   await chooseRowAction(page, WINDOW_NAME, 'Edit');
   const editDialog = page.getByRole('dialog');
   await expect(editDialog.getByLabel('Name')).toHaveValue(WINDOW_NAME);
-  await pickOption(editDialog, 'Why', 'Silence — do not raise alerts; scheduled runs are unaffected');
+  await pickOption(editDialog, 'Why', 'Silence – do not raise alerts; scheduled runs are unaffected');
   await editDialog.getByRole('button', { name: 'Save' }).click();
   await expect(editDialog).toHaveCount(0);
 

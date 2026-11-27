@@ -15,7 +15,7 @@ export const enTriggers = {
   newTrigger: 'New trigger',
   createTrigger: 'Create trigger',
   createFailed: 'Creating the trigger failed',
-  secretOnce: 'Shown once — store it in the sender now',
+  secretOnce: 'Shown once – store it in the sender now',
   copySecret: 'Copy secret',
   stored: 'I stored the secret',
   secretPlaceholder: '<the trigger secret>',
@@ -54,7 +54,7 @@ export const enTriggers = {
   testConfirmSettling: (name: string) =>
     `Test call ${name}? It joins the waiting collected run and replaces its values with this test call's; that run starts for real once the calls settle. The allowed-sources check is skipped.`,
   testResult: (outcome: string) => `Test call: ${outcome}`,
-  testCollected: (at: string) => `Test call: collected — runs at ${at} unless more arrive`,
+  testCollected: (at: string) => `Test call: collected – runs at ${at} unless more arrive`,
   testFailed: 'Test call failed',
   deleteConfirm: (name: string) => `Delete trigger ${name}?`,
   deleteFailed: 'Deleting the trigger failed',
@@ -72,7 +72,7 @@ export const enTriggers = {
   },
   /** A collected delivery's fate in the delivery log (backlog 2.137). */
   delivery: {
-    waiting: (at: string) => `Collected — runs at ${at} unless more arrive`,
+    waiting: (at: string) => `Collected – runs at ${at} unless more arrive`,
     collapsed: 'Collapsed into run',
     superseded: 'Superseded by run',
   },
@@ -81,7 +81,7 @@ export const enTriggers = {
   settle: {
     label: 'Wait for a quiet moment',
     onActive: 'waits for it, then starts once',
-    off: 'off — every call starts a run',
+    off: 'off – every call starts a run',
     summary: (wait: string, latest: string) => `${wait} after the last call, at the latest ${latest} after the first`,
     pendingTitle: 'A collected run is waiting',
     deliveries: (n: number) => (n === 1 ? '1 delivery collected' : `${n} deliveries collected`),

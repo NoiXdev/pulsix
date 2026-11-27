@@ -161,7 +161,7 @@ export const enInstance = {
         phpfpm: 'PHP-FPM',
         script: 'Custom script',
       },
-      hint: 'Projected into every organization at the default org-wide binding, enabled — each one may rebind it to a monitoring group or a host, or disable it, from its own Checks page; neither is set here.',
+      hint: 'Projected into every organization at the default org-wide binding, enabled – each one may rebind it to a monitoring group or a host, or disable it, from its own Checks page; neither is set here.',
       saved: (plugin: string) => `Check definition ${plugin} saved`,
       created: (plugin: string) => `Check definition ${plugin} created`,
     },

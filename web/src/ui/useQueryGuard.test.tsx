@@ -88,7 +88,7 @@ describe('useQueryGuard', () => {
 
     const toasts = await screen.findAllByRole('status');
     expect(toasts).toHaveLength(1);
-    expect(toasts[0]).toHaveTextContent('Could not refresh this page — showing the last loaded data.');
+    expect(toasts[0]).toHaveTextContent('Could not refresh this page – showing the last loaded data.');
   });
 
   it('redirects to /login on a 401 background refetch failure and clears the whole query cache (I3)', async () => {
@@ -194,7 +194,7 @@ describe('useQueryGuard', () => {
 
     const toasts = await screen.findAllByRole('status');
     expect(toasts).toHaveLength(1);
-    expect(toasts[0]).toHaveTextContent('Could not load more — showing what is already loaded.');
+    expect(toasts[0]).toHaveTextContent('Could not load more – showing what is already loaded.');
     expect(screen.getByText('PAGES: page one')).toBeInTheDocument();
   });
 

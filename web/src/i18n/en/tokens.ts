@@ -36,12 +36,12 @@ export const enTokens = {
   empty: 'No tokens yet.',
   explorerHint: 'Every endpoint with its schema, and a console for requests with the current session:',
   explorerLink: 'API explorer',
-  shownOnce: 'Copy this token now — it is shown exactly once and cannot be retrieved again.',
+  shownOnce: 'Copy this token now – it is shown exactly once and cannot be retrieved again.',
   copy: 'Copy',
   done: 'Done',
   nameLabel: 'Name',
   roleLabel: 'Role',
-  roleHint: 'Capped at your own role — the server never mints a token more privileged than you.',
+  roleHint: 'Capped at your own role – the server never mints a token more privileged than you.',
   /** The click guide to connect an assistant, under a new assistant token
    * and from the row menu. */
   connect: {

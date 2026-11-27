@@ -82,7 +82,7 @@ describe('HostInventoryCard', () => {
     renderCard(true);
     const row = (await screen.findByRole('link', { name: 'webserver' })).closest('li')!;
     const pill = within(row).getByText('assistant values');
-    expect(pill.closest('[title]')).toHaveAttribute('title', 'Written by an assistant: note, role — used as plain text until a person changes or accepts them');
+    expect(pill.closest('[title]')).toHaveAttribute('title', 'Written by an assistant: note, role – used as plain text until a person changes or accepts them');
     const other = screen.getByRole('link', { name: 'database' }).closest('li')!;
     expect(within(other).queryByText('assistant values')).not.toBeInTheDocument();
   });
@@ -190,7 +190,7 @@ describe('HostInventoryCard', () => {
       await user.click(await screen.findByRole('button', { name: 'Edit values in group webserver' }));
       const dialog = await screen.findByRole('dialog');
       const mark = await within(dialog).findByTestId('assistant-member-domain');
-      expect(mark).toHaveTextContent('domain: Written by an assistant — used as plain text until a person changes or accepts it');
+      expect(mark).toHaveTextContent('domain: Written by an assistant – used as plain text until a person changes or accepts it');
       await user.click(within(mark).getByRole('button', { name: 'Accept domain as live' }));
       await screen.findByText('domain is live now');
       expect(accepted?.headers.get('If-Match')).toBe('"4"');

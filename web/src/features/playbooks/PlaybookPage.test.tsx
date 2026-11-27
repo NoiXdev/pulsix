@@ -37,7 +37,7 @@ describe('PlaybookPage', () => {
     expect(save).toBeDisabled();
     replaceCode(editor, '- hosts: all\n');
     await waitFor(() => expect(save).toBeEnabled());
-    expect(within(check).getByText('Parses as a list of plays — ready to save.')).toBeInTheDocument();
+    expect(within(check).getByText('Parses as a list of plays – ready to save.')).toBeInTheDocument();
   });
 
   it('saves with Save, then the page is clean again', async () => {

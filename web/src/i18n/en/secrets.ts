@@ -59,7 +59,7 @@ export const enSecrets = {
   /** Read as the continuation of the field's label, hence the lower case. */
   errors: {
     name: 'must be 1 to 64 characters: letters, digits and . _ -',
-    nameTaken: 'a secret of this name already exists — replace it from its row instead',
+    nameTaken: 'a secret of this name already exists – replace it from its row instead',
     fieldName: 'must be 1 to 64 characters: letters, digits and . _ -',
     fieldRepeated: 'this field name appears twice',
     valueTooLong: 'must be at most 4096 bytes',

@@ -33,7 +33,7 @@ export const enSetup = {
   mfa: {
     title: 'Enrol a second factor now',
     intro:
-      'The instance administrator account is created next. You will be asked to add an authenticator app or a passkey right away — every account needs a second factor before it can do anything else.',
+      'The instance administrator account is created next. You will be asked to add an authenticator app or a passkey right away – every account needs a second factor before it can do anything else.',
     creating: 'Creating…',
     create: 'Create administrator & continue',
   },

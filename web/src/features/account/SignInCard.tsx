@@ -173,7 +173,7 @@ export function SignInCard({ onEnrolled }: { onEnrolled?: () => void | Promise<v
               <span data-testid="recovery-codes-remaining" className="font-mono text-foreground">
                 {me.data?.recovery_codes_remaining ?? 0}
               </span>{' '}
-              {t.account.recovery.left} — {t.account.recovery.leftHint}
+              {t.account.recovery.left} – {t.account.recovery.leftHint}
             </>
           }
         >

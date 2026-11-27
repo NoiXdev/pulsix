@@ -49,11 +49,11 @@ test('an operator creates a repo-sync webhook trigger, sees its secret once, and
   await dialog.getByRole('button', { name: 'Create trigger' }).click();
 
   // --- Shown once --------------------------------------------------------
-  await expect(dialog.getByText('Shown once — store it in the sender now')).toBeVisible();
+  await expect(dialog.getByText('Shown once – store it in the sender now')).toBeVisible();
   const secret = (await dialog.locator('code').first().textContent())?.trim() ?? '';
   expect(secret.length).toBeGreaterThan(16);
   await dialog.getByRole('button', { name: 'I stored the secret' }).click();
-  await expect(dialog.getByText('Shown once — store it in the sender now')).toHaveCount(0);
+  await expect(dialog.getByText('Shown once – store it in the sender now')).toHaveCount(0);
 
   // The trigger is listed with the URL a sender posts to, and the secret
   // is gone from the page — reopening must not bring it back.

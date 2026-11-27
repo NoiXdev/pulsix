@@ -81,7 +81,7 @@ export function HostCheckHttp({ org, hostId, canWrite, frozen = false, check, ef
           {decidedBy ? (
             <>
               {decisionOriginLabel(decidedBy, t, check.key)}
-              {decidedBy.note && ` — ${decidedBy.note}`}
+              {decidedBy.note && ` – ${decidedBy.note}`}
             </>
           ) : (
             t.hosts.value.originUnknown
