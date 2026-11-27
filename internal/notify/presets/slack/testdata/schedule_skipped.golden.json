@@ -1,0 +1,46 @@
+{
+  "text": "Nightly OS patching: skipped",
+  "attachments": [
+    {
+      "color": "#FBBF24",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Nightly OS patching: skipped"
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*Template:* patch-all\n*Reason:* every targeted host is in a maintenance window\n*Outcome:* skipped_maintenance\n*Due:* 2026-11-27T08:30:00Z"
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Pulsix · Acme"
+            }
+          ]
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "text": {
+                "type": "plain_text",
+                "text": "Open in Pulsix"
+              },
+              "url": "https://pulsix.example/o/acme/schedules/00000000-0000-7000-8000-000000000002"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

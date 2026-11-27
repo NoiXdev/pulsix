@@ -1,0 +1,46 @@
+{
+  "text": "Nightly OS patching: succeeded with changes",
+  "attachments": [
+    {
+      "color": "#34D399",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Nightly OS patching: succeeded with changes"
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*Template:* patch-all\n*Hosts:* 3 (ok 3, changed 1, failed 0)\n*Duration:* 1m1s"
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Pulsix · Acme"
+            }
+          ]
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "text": {
+                "type": "plain_text",
+                "text": "Open in Pulsix"
+              },
+              "url": "https://pulsix.example/o/acme/runs/00000000-0000-7000-8000-000000000005"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

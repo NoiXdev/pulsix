@@ -1,0 +1,46 @@
+{
+  "text": "Test notification from Acme",
+  "attachments": [
+    {
+      "color": "#00E5FF",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Test notification from Acme"
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "This is a test message from a Pulsix notification channel. It worked."
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Pulsix · Acme"
+            }
+          ]
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "text": {
+                "type": "plain_text",
+                "text": "Open in Pulsix"
+              },
+              "url": "https://pulsix.example/o/acme/settings/notifications"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,50 @@
+{
+  "text": "5 alerts for Acme",
+  "attachments": [
+    {
+      "color": "#F87171",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "5 alerts for Acme"
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*<https://pulsix.example/o/acme/alerts?host=00000000-0000-7000-8000-000000000020|shop-1>:* crit · opened · shop/home http.assertion: status == 200 — saw 503\n*<https://pulsix.example/o/acme/alerts?host=00000000-0000-7000-8000-000000000021|web-2>:* warn · worsened · cpu used_percent\n*<https://pulsix.example/o/acme/alerts?host=00000000-0000-7000-8000-000000000022|db-1>:* crit · closed · disk//var used_percent\n*<https://pulsix.example/o/acme/alerts?host=00000000-0000-7000-8000-000000000023|edge-3>:* warn · opened · not seen since 2026-11-27T08:10:00Z"
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Pulsix · Acme"
+            },
+            {
+              "type": "mrkdwn",
+              "text": "… and 1 more"
+            }
+          ]
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "text": {
+                "type": "plain_text",
+                "text": "Open in Pulsix"
+              },
+              "url": "https://pulsix.example/o/acme/alerts"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

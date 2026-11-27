@@ -1,0 +1,46 @@
+{
+  "text": "Nightly OS patching: failed",
+  "attachments": [
+    {
+      "color": "#F87171",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "Nightly OS patching: failed"
+          }
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*Template:* patch-all\n*Follow-up of:* backup-all\n*Hosts:* 12 (ok 10, changed 9, failed 1), no result 1 — 2 excluded for maintenance\n*Started:* 2026-11-27T08:25:48Z\n*Duration:* 4m12s"
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "Pulsix · Acme"
+            }
+          ]
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "text": {
+                "type": "plain_text",
+                "text": "Open in Pulsix"
+              },
+              "url": "https://pulsix.example/o/acme/runs/00000000-0000-7000-8000-000000000005"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
