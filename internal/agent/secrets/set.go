@@ -30,7 +30,23 @@ type Set struct {
 	localChecks        []LocalCheck // key order
 	localCheckProblems []string     // line order
 	probes             ProbePolicy
+	// statusPage is the status_page section (backlog 3.132) and
+	// statusPageProblem why it was refused ("" when it was not).
+	statusPage        StatusPage
+	statusPageProblem string
+	// redactor replaces the secrets' values (redact.go); nil for none.
+	redactor *Redactor
 }
+
+// StatusPage returns the status page settings and, when the section was
+// refused, why ("line N, column M: <reason>"; the page is then off).
+func (s Set) StatusPage() (page StatusPage, problem string) {
+	return s.statusPage, s.statusPageProblem
+}
+
+// Redactor replaces the set's secret values; nil when it has none of at
+// least RedactMinLen bytes.
+func (s Set) Redactor() *Redactor { return s.redactor }
 
 // Probes returns a copy of the probe policy.
 func (s Set) Probes() ProbePolicy { return s.probes.clone() }
@@ -97,8 +113,8 @@ func (s Set) localCheckKeys() []string {
 // refused local checks only, so a Set printed by mistake (%v, %+v, %s, a
 // panic) shows no value, no argument and no param.
 func (s Set) String() string {
-	return fmt.Sprintf("secrets%v commands%v checks%v check_problems=%d",
-		s.Names(), s.CommandNames(), s.localCheckKeys(), len(s.localCheckProblems))
+	return fmt.Sprintf("secrets%v commands%v checks%v check_problems=%d status_page=%t",
+		s.Names(), s.CommandNames(), s.localCheckKeys(), len(s.localCheckProblems), s.statusPage.On())
 }
 
 // GoString is String for %#v.
@@ -112,5 +128,6 @@ func (s Set) LogValue() slog.Value {
 		slog.Any("commands", s.CommandNames()),
 		slog.Any("checks", s.localCheckKeys()),
 		slog.Int("check_problems", len(s.localCheckProblems)),
+		slog.Bool("status_page", s.statusPage.On()),
 	)
 }

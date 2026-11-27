@@ -82,9 +82,9 @@ func TestParseRefusesWithoutQuotingTheFile(t *testing.T) {
 		want string // the exact error text: line, column and a generic reason
 	}{
 		{"unknown top-level key", "secrets: {}\nrules:\n  - " + secretValue + "\n",
-			"line 2, column 1: unknown top-level key; only secrets, commands, checks and probes are allowed"},
+			"line 2, column 1: unknown top-level key; only secrets, commands, checks, probes and status_page are allowed"},
 		{"top level not a mapping", "- " + secretValue + "\n",
-			"line 1, column 1: the file must be a mapping with a secrets, commands, checks or probes key"},
+			"line 1, column 1: the file must be a mapping with a secrets, commands, checks, probes or status_page key"},
 		{"secrets not a mapping", "secrets:\n  - " + secretValue + "\n",
 			"line 2, column 3: secrets must map secret names to their fields"},
 		{"secret not a mapping", "secrets:\n  pg: " + secretValue + "\n",
