@@ -1403,14 +1403,20 @@ and no dependency: `host_agents.probes_supported` and `Heartbeat.probes_supporte
 3.13a. `agent.yaml` gains a `probes:` section (`enabled: false` makes the agent report that it
 does not probe, so it is never assigned; `deny_cidrs:` lists ranges its probes refuse). The
 agent DTO gains `probes_supported` (additive). **The `probes:` key is stricter for an older
-agent:** an agent older than this release does not know the key and refuses the whole file,
-so a host whose `agent.yaml` gains `probes:` also loses its `secrets:`, `commands:` and
-`checks:` until that agent is updated. Update the agent first, then add `probes:`. A new agent
-under an older manager opts out the same way (the manager reads the 3.13a flag), and its
-refusals arrive as an error text on the vantage; an older manager returns no
-`probes_supported` on the agent read, so the card shows "no" for every agent until the
-manager is updated. A new agent whose `agent.yaml` is refused for any reason now stops
-probing for other hosts until the file is fixed (it used to keep probing).
+agent, and does not protect it:** an agent older than this release does not know the key and
+refuses the whole file, so a host whose `agent.yaml` gains `probes:` loses its `secrets:`,
+`commands:` and `checks:` until that agent is updated — and an agent of 3.13a or later keeps
+reporting `probes_supported` and keeps probing other hosts as before, without the opt-out and
+without the deny list (only this release turns probing off for a refused file). Update the
+agent first, then add `probes:`; the host's Agent card shows "Probes other hosts: No" once
+the opt-out is in effect. A new agent under an older manager opts out the same way (the
+manager reads the 3.13a flag), and its local refusals arrive as an error text on the
+vantage. An older manager serves its own pages, which have no "Probes other hosts" row and
+whose agent read carries no `probes_supported`; only while managers of both versions serve
+one address can the new card, answered by an older instance, read "No" for every agent. A
+new agent whose `agent.yaml` is refused for any reason now stops probing for other hosts
+until the file is fixed (it used to keep probing); write the file atomically (to a temporary
+file, then rename) so that a half-written file does not turn probing off for a minute.
 
 ## Behaviour changes to check after an upgrade
 

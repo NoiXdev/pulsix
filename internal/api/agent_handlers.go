@@ -67,7 +67,7 @@ type agentDTO struct {
 	ConfigCheckedAt *time.Time `json:"config_checked_at,omitempty" doc:"When the stored comparison was written: at once when either version changes, otherwise again once it is 10 minutes old. Omitted until the manager has compared"`
 	// ProbesSupported is the agent's last heartbeat flag (backlog 3.13a,
 	// 3.82): whether it is a candidate vantage point at all.
-	ProbesSupported bool `json:"probes_supported" doc:"Whether the agent probes other hosts' synthetic checks as a vantage point: false for an agent too old to, and for one whose local configuration turns it off"`
+	ProbesSupported bool `json:"probes_supported" doc:"Whether the agent probes other hosts' synthetic checks as a vantage point: false for an agent too old to, for one whose local configuration turns it off, and while that configuration is refused"`
 }
 
 type agentTokenDTO struct {

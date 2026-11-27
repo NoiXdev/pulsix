@@ -225,7 +225,7 @@ describe('HostAgentCard', () => {
       withProbes(false);
       renderCard();
       expect(await screen.findByText('Probes other hosts')).toBeInTheDocument();
-      expect(screen.getByText('No — turned off in agent.yaml, or the agent is too old')).toBeInTheDocument();
+      expect(screen.getByText('No — turned off or refused in agent.yaml, or the agent is too old')).toBeInTheDocument();
     });
   });
 
