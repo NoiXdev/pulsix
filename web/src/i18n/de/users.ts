@@ -137,7 +137,7 @@ export const deUsers: Messages['users'] = {
       invitePending: 'Die Einladung dieses Kontos wurde nie angenommen, daher kann es nur deaktiviert oder reaktiviert werden.',
       mailNotConfigured: 'Auf dieser Instanz ist kein ausgehender Mailversand eingerichtet.',
       lastInstanceAdmin: 'Das letzte aktive Instanz-Admin-Konto kann nicht deaktiviert werden.',
-      instanceAdminRequired: 'Das ist nur mit Instanz-Adminrechten möglich.',
+      instanceAdminRequired: 'Das ist nur mit Instanz-Admin-Rechten möglich.',
       failed: 'Die Aktion ist fehlgeschlagen.',
     },
   },

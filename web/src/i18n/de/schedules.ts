@@ -113,7 +113,7 @@ export const deSchedules: Messages['schedules'] = {
     title: 'Benachrichtigungen',
     channelsFailed: 'Die Kanäle konnten nicht geladen werden, daher lassen sich diese Regeln derzeit nicht bearbeiten.',
     none: 'Keine Benachrichtigungen – Läufe erscheinen nur im Aktivitätsprotokoll.',
-    noChannels: 'Noch keine Kanäle – Administratoren legen sie unter Einstellungen → Benachrichtigungen an.',
+    noChannels: 'Noch keine Kanäle – Admins legen sie unter Einstellungen → Benachrichtigungen an.',
     channel: 'Kanal',
     save: 'Benachrichtigungen speichern',
     saved: 'Benachrichtigungen gespeichert',

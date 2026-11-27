@@ -606,7 +606,7 @@ export const deChecks: Messages['checks'] = {
   items: {
     noAccess: 'Element-Entscheidungen sind für Mitglieder dieser Organisation sichtbar.',
     deleteConfirm: (decision: string, pattern: string) =>
-      `Die Entscheidung „${decision}“ für das Muster „${pattern}“ löschen? Die erfassten Elemente werden wieder normal bewertet.`,
+      `Die Entscheidung „${decision}“ für das Muster „${pattern}“ löschen? Die Elemente, auf die das Muster zutrifft, werden wieder normal bewertet.`,
     summary: (n: number) =>
       `${n === 1 ? '1 Entscheidung' : `${n} Entscheidungen`} · eine Host-Entscheidung hat Vorrang vor einer Organisationsentscheidung für denselben Check`,
     newDecision: 'Neue Entscheidung',

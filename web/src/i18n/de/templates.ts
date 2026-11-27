@@ -84,7 +84,7 @@ export const deTemplates: Messages['templates'] = {
     newCredential: 'Neue Zugangsdaten…',
     credentialHint: 'SSH-Schlüssel oder Passwort als Zugangsdaten für Hosts ohne eigene.',
     vaultHelp:
-      'Vault-Passwörter mit Bezeichnung, die diese Vorlage zu denen ihres Repositorys hinzufügt; bei gleicher Bezeichnung gilt das der Vorlage.',
+      'Vault-Passwörter mit Bezeichnung, die diese Vorlage zu denen ihres Repositorys hinzufügt; bei gleicher Bezeichnung hat das Passwort der Vorlage Vorrang.',
     confirmDelete: (name: string) => `Vorlage ${name} löschen?`,
     deleted: (name: string) => `Vorlage ${name} gelöscht`,
     deleteFailed: 'Löschen fehlgeschlagen',
