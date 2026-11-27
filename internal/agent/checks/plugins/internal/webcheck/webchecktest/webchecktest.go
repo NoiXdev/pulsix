@@ -96,8 +96,9 @@ func (c *Clock) Now() time.Time { return c.T }
 // Advance moves the clock forward.
 func (c *Clock) Advance(d time.Duration) { c.T = c.T.Add(d) }
 
-// Find returns the observation for metric; it panics when one has an item
-// (the web server plugins report no items).
+// Find returns the observation for metric on item ""; it panics when one
+// has an item (a server metric never does; FindItem reads the per-pool and
+// API items).
 func Find(obs []checks.Observation, metric string) (checks.Observation, bool) {
 	for _, o := range obs {
 		if o.Metric == metric {
