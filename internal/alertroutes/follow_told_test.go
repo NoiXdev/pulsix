@@ -1,11 +1,14 @@
-// The told audience beyond the resolve (backlog 2.145): an acknowledgement
-// reaches every route that already queued a message about its alert, even
-// when the alert eased to a severity outside that route's set before
-// somebody took it. Snoozes keep matching on the live severity.
+// The told audience beyond 2.144's resolve: an acknowledgement reaches
+// every route that already queued a message about its alert, even when the
+// alert eased to a severity outside that route's set before somebody took
+// it (backlog 2.145; snoozes keep matching on the live severity), and a
+// resolve or an acknowledgement also reaches the channels of every
+// escalation step that fired for such a route (backlog 2.146).
 package alertroutes_test
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -114,5 +117,135 @@ func TestAcknowledgementBreaksThroughWhereThePageDid(t *testing.T) {
 	}
 	if got := env.eventLedger(alert, alerts.EventAcknowledged); got != alertroutes.StateSent {
 		t.Errorf("acknowledged event ledger = %q, want %q", got, alertroutes.StateSent)
+	}
+}
+
+// itemsTo counts the items of kind about alert in the messages enqueued
+// for channel.
+func (e *followEnv) itemsTo(channel, alert uuid.UUID, kind alerts.EventKind) int {
+	e.t.Helper()
+	e.enq.mu.Lock()
+	defer e.enq.mu.Unlock()
+	n := 0
+	for i, c := range e.enq.calls {
+		if !slices.Contains(c.channels, channel) {
+			continue
+		}
+		for _, it := range e.enq.events[i].Alerts.Items {
+			if it.AlertID == alert && it.Event == string(kind) {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+// climbToStepOne opens a crit alert on a crit-only route whose ladder
+// names step1 and step2 five minutes apart, and ticks until step 1 has
+// fired.
+func (e *followEnv) climbToStepOne(step1, step2 alertroutes.Step) (alert, route uuid.UUID) {
+	e.t.Helper()
+	step1.Position, step1.Delay = 1, 5*time.Minute
+	step2.Position, step2.Delay = 2, 5*time.Minute
+	route = e.routeWithStepsForSeverities([]rules.State{rules.StateCrit}, []alertroutes.Step{step1, step2})
+	alert = e.openCritAlert()
+	e.tickOnce()
+	e.clock.advance(5 * time.Minute)
+	e.tickOnce()
+	if n := e.deliveriesTo(route, 1); n != 1 {
+		e.t.Fatalf("rung 1 fired %d time(s), want 1", n)
+	}
+	return alert, route
+}
+
+// TestClosedReachesTheEscalationStepsThatFired: nobody answered the page,
+// so step 1 woke a second person; the alert then eased and resolved. The
+// resolve reaches the route's own channel and step 1's, and not step 2's,
+// which never fired — the second person is not left working an incident
+// that is over.
+func TestClosedReachesTheEscalationStepsThatFired(t *testing.T) {
+	env := newFollowEnv(t)
+	step1, step2 := env.secondChannel(), env.secondChannel()
+	alert, _ := env.climbToStepOne(alertroutes.Step{ChannelIDs: []uuid.UUID{step1}},
+		alertroutes.Step{ChannelIDs: []uuid.UUID{step2}})
+
+	env.setSeverity(alert, rules.StateWarn)
+	env.closeAlert(alert)
+	env.tickOnce()
+
+	for _, c := range []struct {
+		name    string
+		channel uuid.UUID
+		want    int
+	}{{"the route's own channel", env.channel, 1}, {"step 1's channel", step1, 1}, {"step 2's channel", step2, 0}} {
+		if got := env.itemsTo(c.channel, alert, alerts.EventClosed); got != c.want {
+			t.Errorf("closed items to %s = %d, want %d", c.name, got, c.want)
+		}
+	}
+}
+
+// TestAcknowledgementReachesTheEscalationStepsThatFired: the person step 1
+// woke hears that somebody has taken the alert; step 2 never fired (the
+// acknowledgement stops the chain) and hears nothing.
+func TestAcknowledgementReachesTheEscalationStepsThatFired(t *testing.T) {
+	env := newFollowEnv(t)
+	step1, step2 := env.secondChannel(), env.secondChannel()
+	alert, _ := env.climbToStepOne(alertroutes.Step{ChannelIDs: []uuid.UUID{step1}},
+		alertroutes.Step{ChannelIDs: []uuid.UUID{step2}})
+
+	env.acknowledge(alert)
+	env.tickOnce()
+
+	if got := env.itemsTo(step1, alert, alerts.EventAcknowledged); got != 1 {
+		t.Errorf("acknowledged items to step 1's channel = %d, want 1", got)
+	}
+	if got := env.itemsTo(step2, alert, alerts.EventAcknowledged); got != 0 {
+		t.Errorf("acknowledged items to step 2's channel = %d, want 0", got)
+	}
+	if got := env.itemsTo(env.channel, alert, alerts.EventAcknowledged); got != 1 {
+		t.Errorf("acknowledged items to the route's own channel = %d, want 1", got)
+	}
+}
+
+// TestAStepChannelThatIsAlsoTheRoutesHearsOnce: a ladder that repeats the
+// route's own channel (page again, louder) must not tell it the alert
+// resolved twice.
+func TestAStepChannelThatIsAlsoTheRoutesHearsOnce(t *testing.T) {
+	env := newFollowEnv(t)
+	alert, _ := env.climbToStepOne(alertroutes.Step{ChannelIDs: []uuid.UUID{env.channel}},
+		alertroutes.Step{ChannelIDs: []uuid.UUID{env.secondChannel()}})
+
+	env.closeAlert(alert)
+	env.tickOnce()
+
+	if got := env.closedItems(alert); got != 1 {
+		t.Errorf("closed items about the alert = %d, want 1", got)
+	}
+}
+
+// TestARotationStepIsResolvedAtTheTicksInstant: step 1 names a rotation
+// and woke whoever was on call then; by the time the alert resolves the
+// rotation has handed over. The resolve goes to whoever is on call now
+// (decision 8, as for the route's own rotation).
+func TestARotationStepIsResolvedAtTheTicksInstant(t *testing.T) {
+	env := newFollowEnv(t)
+	first, second := env.secondChannel(), env.secondChannel()
+	rot := env.rotation(1, env.clock.Now().Add(-time.Hour), "UTC", []uuid.UUID{first, second})
+	alert, _ := env.climbToStepOne(alertroutes.Step{RotationID: &rot},
+		alertroutes.Step{ChannelIDs: []uuid.UUID{env.secondChannel()}})
+	if got := env.itemsTo(first, alert, alerts.EventKind("escalated")); got != 1 {
+		t.Fatalf("escalated items to the first on call = %d, want 1", got)
+	}
+
+	env.acknowledge(alert) // stop the chain before the day passes
+	env.clock.advance(24 * time.Hour)
+	env.closeAlert(alert)
+	env.tickOnce()
+
+	if got := env.itemsTo(second, alert, alerts.EventClosed); got != 1 {
+		t.Errorf("closed items to the one on call now = %d, want 1", got)
+	}
+	if got := env.itemsTo(first, alert, alerts.EventClosed); got != 0 {
+		t.Errorf("closed items to the one on call when the step fired = %d, want 0", got)
 	}
 }

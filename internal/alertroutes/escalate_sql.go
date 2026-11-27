@@ -16,9 +16,11 @@
 package alertroutes
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -104,16 +106,45 @@ func (s *Store) ClaimStep(ctx context.Context, tx pgx.Tx, orgID, alertID, routeI
 	return n > 0, nil
 }
 
-// ToldRoutes returns every route that already queued a message about
-// alertID — the routes holding its escalation base (ClaimStep at position
-// 0, which decide claims for each route an event goes out through). The
-// follower asks it for the kinds in toldEvents only (resolution.route).
-func (s *Store) ToldRoutes(ctx context.Context, tx pgx.Tx, orgID, alertID uuid.UUID) ([]uuid.UUID, error) {
-	ids, err := gen.New(tx).ToldRoutesForAlert(ctx, gen.ToldRoutesForAlertParams{OrgID: orgID, AlertID: alertID})
-	if err != nil {
-		return nil, fmt.Errorf("told routes for alert %s: %w", alertID, err)
+// Told is what an alert's escalation ledger says about who heard of it:
+// each route that queued a message about the alert (it holds the alert's
+// base, position 0), mapped to the positions of its escalation steps that
+// fired since, ascending — none for a route whose ladder never climbed.
+type Told map[uuid.UUID][]int
+
+// Routes lists the told routes, sorted by their raw bytes so a caller's
+// result does not depend on map order.
+func (t Told) Routes() []uuid.UUID {
+	out := make([]uuid.UUID, 0, len(t))
+	for id := range t {
+		out = append(out, id)
 	}
-	return ids, nil
+	slices.SortFunc(out, func(a, b uuid.UUID) int { return bytes.Compare(a[:], b[:]) })
+	return out
+}
+
+// Told reads alertID's escalation ledger (EscalationLedgerForAlert) into a
+// Told. A step row whose route holds no base tells nobody: a step is only
+// ever claimed after DueStep saw a base, so the case is unreachable, and
+// "told" keeps meaning "queued a message through the route itself". The
+// follower asks it for the kinds in toldEvents only (resolution.route).
+func (s *Store) Told(ctx context.Context, tx pgx.Tx, orgID, alertID uuid.UUID) (Told, error) {
+	rows, err := gen.New(tx).EscalationLedgerForAlert(ctx, gen.EscalationLedgerForAlertParams{OrgID: orgID, AlertID: alertID})
+	if err != nil {
+		return nil, fmt.Errorf("escalation ledger for alert %s: %w", alertID, err)
+	}
+	told := Told{}
+	for _, r := range rows {
+		if r.Position == 0 {
+			told[r.RouteID] = nil
+		}
+	}
+	for _, r := range rows {
+		if _, ok := told[r.RouteID]; ok && r.Position > 0 {
+			told[r.RouteID] = append(told[r.RouteID], int(r.Position))
+		}
+	}
+	return told, nil
 }
 
 // RecordEscalation writes the 'escalated' alert_events row for one step

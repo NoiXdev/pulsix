@@ -187,26 +187,35 @@ func (r *resolution) route(ctx context.Context, ev PendingEvent) (routing, error
 		return routing{}, err
 	}
 	subject := Subject{HostID: ev.HostID, Severity: ev.Severity, Event: ev.Kind}
+	var told Told
 	if tellsTheTold(ev.Kind) {
 		// The routes that delivered about this alert are owed its resolve
 		// and its acknowledgements whatever its severity is now (match.go's
-		// owesTheTold). Read on the tick's transaction, like every other
+		// owesTheTold), and so are their escalation steps that fired
+		// (audienceOf). Read on the tick's transaction, like every other
 		// read of a tick.
-		if subject.Told, err = r.f.store.ToldRoutes(ctx, r.tx, r.orgID, ev.AlertID); err != nil {
+		if told, err = r.f.store.Told(ctx, r.tx, r.orgID, ev.AlertID); err != nil {
 			return routing{}, err
 		}
+		subject.Told = told.Routes()
 	}
 	matched := MatchRoutes(subject, hostGroups, r.routes)
 
 	var open []Route
 	var held bool
 	for _, rt := range matched {
-		chans := r.channelsOf(ctx, rt)
+		owed := owesTheTold(rt, subject)
+		var chans []uuid.UUID
+		if owed {
+			chans = r.audienceOf(ctx, rt, told[rt.ID])
+		} else {
+			chans = r.channelsOf(ctx, rt)
+		}
 		if len(chans) == 0 {
 			continue
 		}
 		breaks := []rules.State{ev.Severity}
-		if owesTheTold(rt, subject) {
+		if owed {
 			// A resolve or an acknowledgement crosses a shut window
 			// wherever the page could have: judged at the live severity
 			// alone, a crit page that broke through at 03:00 and eased to
@@ -249,6 +258,27 @@ func (r *resolution) route(ctx context.Context, ev PendingEvent) (routing, error
 		routeIDs[i] = rt.ID
 	}
 	return routing{channels: Channels(open), held: held, routeIDs: routeIDs}, nil
+}
+
+// audienceOf is everyone a route told about an alert, for an event owed
+// to them (owesTheTold): the route's own channels, unioned with the
+// channels of each of its escalation steps that fired (fired, positions
+// from Told) — the secondary on call or the manager a step woke precisely
+// because nobody answered must hear the resolve and the acknowledgement
+// too (backlog 2.146). A step is looked up by position in the route's
+// ladder as it stands and resolved through channelsOf at this tick's
+// instant, the construction fireStep (follow_escalate.go) uses and the
+// same decision 8 the route's own channels follow; a position the ladder
+// no longer has contributes nothing. Deduplicated and sorted (Channels), so
+// a step repeating the route's own channel is told once.
+func (r *resolution) audienceOf(ctx context.Context, rt Route, fired []int) []uuid.UUID {
+	all := []Route{{Channels: r.channelsOf(ctx, rt)}}
+	for _, st := range rt.Steps {
+		if slices.Contains(fired, st.Position) {
+			all = append(all, Route{Channels: r.channelsOf(ctx, Route{ID: rt.ID, RotationID: st.RotationID, Channels: st.ChannelIDs})})
+		}
+	}
+	return Channels(all)
 }
 
 // channelsOf is where a route's channel source is decided: the fixed list
