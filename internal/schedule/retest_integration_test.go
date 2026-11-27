@@ -142,3 +142,65 @@ func TestAdvisoryLockerNoticesALostSession(t *testing.T) {
 	}
 	a.Unlock(ctx) // holds nothing: a no-op
 }
+
+// TestAdvisoryLockerGenerationCountsSessions (backlog 3.79 review): the
+// generation changes exactly when TryLock answers true on a new session —
+// the first acquire, a re-acquire after Unlock, and a re-acquire after the
+// held session died — and stays while the same session keeps the lock, so
+// a loop holding the lock across ticks can tell "still held" from "lost
+// and taken again in between".
+func TestAdvisoryLockerGenerationCountsSessions(t *testing.T) {
+	d := testdb.Open(t)
+	key := int64(4545)
+	a := schedule.NewAdvisoryLocker(d.Pool(), key)
+	defer a.Unlock(ctx)
+	if g := a.Generation(); g != 0 {
+		t.Fatalf("generation before any lock = %d, want 0", g)
+	}
+	tryLock := func(want uint64) {
+		t.Helper()
+		if locked, err := a.TryLock(ctx); err != nil || !locked {
+			t.Fatalf("TryLock = %v, %v", locked, err)
+		}
+		if g := a.Generation(); g != want {
+			t.Fatalf("generation = %d, want %d", g, want)
+		}
+	}
+	tryLock(1)
+	tryLock(1) // the same session still holds it
+	a.Unlock(ctx)
+	tryLock(2)
+
+	var pid int32
+	if err := d.Pool().QueryRow(ctx,
+		`SELECT pid FROM pg_locks WHERE locktype = 'advisory' AND objid = $1 AND granted`, key).Scan(&pid); err != nil {
+		t.Fatal(err)
+	}
+	admin, err := pgx.Connect(ctx, testdb.URL(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = admin.Close(ctx) }()
+	var terminated bool
+	if err := admin.QueryRow(ctx, `SELECT pg_terminate_backend($1)`, pid).Scan(&terminated); err != nil || !terminated {
+		t.Fatalf("pg_terminate_backend = %v, %v", terminated, err)
+	}
+	// The dead session is noticed and the lock, free now, taken on a new one.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		locked, err := a.TryLock(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if locked {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("A never re-acquired the lock after its session was terminated")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if g := a.Generation(); g != 3 {
+		t.Fatalf("generation after re-acquiring on a new session = %d, want 3", g)
+	}
+}

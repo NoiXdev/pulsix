@@ -7,14 +7,15 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/agents"
 	"github.com/noixdev/pulsix/internal/db"
 )
 
 // TestProbesSupportedAndOnlineCapableAgents: probes_supported starts false,
-// SetProbesSupported flips it by host (org-unscoped, like the heartbeat),
-// and OnlineProbeAgents lists the organization's agents that are capable
-// and online by the same rule as the Agents page, never another
-// organization's.
+// the heartbeat sets it from its flag in the same statement (backlog 3.79;
+// org-unscoped, by serial), a touch leaves it, and OnlineProbeAgents
+// lists the organization's agents that are capable and online by the same
+// rule as the Agents page, never another organization's.
 func TestProbesSupportedAndOnlineCapableAgents(t *testing.T) {
 	svc, _, d, org, zone := newAgentWorld(t, "agent-probes")
 	fresh := createHost(t, d, org, zone, "fresh")
@@ -39,13 +40,24 @@ func TestProbesSupportedAndOnlineCapableAgents(t *testing.T) {
 	if err := d.Pool().QueryRow(ctx, `SELECT probes_supported FROM host_agents WHERE host_id = $1`, fresh.ID).Scan(&supported); err != nil || supported {
 		t.Fatalf("a registered agent supports probes = %v (%v), want false", supported, err)
 	}
-	for _, h := range []uuid.UUID{fresh.ID, stale.ID, silent.ID} {
-		if err := svc.SetProbesSupported(ctx, h, true); err != nil {
+	heartbeat := func(serial string, probes bool) {
+		t.Helper()
+		if err := svc.Heartbeat(ctx, serial, agents.HeartbeatReport{Version: "v1", SecretsState: "ok", ProbesSupported: probes}); err != nil {
 			t.Fatal(err)
 		}
 	}
+	for _, serial := range []string{"960", "961", "962"} { // fresh, stale, silent
+		heartbeat(serial, true)
+	}
+	// A touch (any other message) keeps the flag.
+	if err := svc.Touch(ctx, "960", "v1"); err != nil {
+		t.Fatal(err)
+	}
 	// fresh heartbeated now, stale past the window, silent never.
 	if _, err := d.Pool().Exec(ctx, `UPDATE host_agents SET last_seen = now() WHERE host_id IN ($1, $2)`, fresh.ID, plain.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Pool().Exec(ctx, `UPDATE host_agents SET last_seen = NULL WHERE host_id = $1`, silent.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.Pool().Exec(ctx, `UPDATE host_agents SET last_seen = now() - interval '10 minutes' WHERE host_id = $1`, stale.ID); err != nil {
@@ -56,12 +68,8 @@ func TestProbesSupportedAndOnlineCapableAgents(t *testing.T) {
 	}
 
 	// A capable agent that goes unsupported leaves the list; plain joins on support.
-	if err := svc.SetProbesSupported(ctx, fresh.ID, false); err != nil {
-		t.Fatal(err)
-	}
-	if err := svc.SetProbesSupported(ctx, plain.ID, true); err != nil {
-		t.Fatal(err)
-	}
+	heartbeat("960", false)
+	heartbeat("963", true)
 	if got := list(); !slices.Equal(got, []uuid.UUID{plain.ID}) {
 		t.Fatalf("after flip = %v, want only %v", got, plain.ID)
 	}

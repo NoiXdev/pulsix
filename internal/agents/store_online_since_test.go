@@ -197,7 +197,7 @@ func TestOnlineWindowFollowsTheAgentsHeartbeatInterval(t *testing.T) {
 		t.Fatalf("300 s after the last contact of a 120 s agent: online = %v, interval = %v; want online, 2m",
 			v.Online, v.HeartbeatInterval)
 	}
-	if err := svc.SetProbesSupported(ctx, h.ID, true); err != nil {
+	if _, err := d.Pool().Exec(ctx, `UPDATE host_agents SET probes_supported = true WHERE host_id = $1`, h.ID); err != nil {
 		t.Fatal(err)
 	}
 	if ids, err := svc.OnlineProbeAgents(scoped, org); err != nil || len(ids) != 1 || ids[0] != h.ID {

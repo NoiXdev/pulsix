@@ -339,7 +339,7 @@ func (f *fakeStore) Touch(_ context.Context, serial, version string) error {
 	return nil
 }
 
-func (f *fakeStore) Heartbeat(_ context.Context, serial, version string, secrets agents.SecretsReport, local agents.LocalChecksReport) error {
+func (f *fakeStore) Heartbeat(_ context.Context, serial, version string, secrets agents.SecretsReport, local agents.LocalChecksReport, _ bool) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.touched = append(f.touched, serial+":"+version)
@@ -1114,8 +1114,6 @@ func TestCreateTokenValidatesTheNameHint(t *testing.T) {
 		})
 	}
 }
-
-func (f *fakeStore) SetProbesSupported(context.Context, uuid.UUID, bool) error { return nil }
 
 func (f *fakeStore) RecordHeartbeatInterval(_ context.Context, serial string, interval *time.Duration) error {
 	f.mu.Lock()

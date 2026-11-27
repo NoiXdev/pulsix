@@ -238,7 +238,8 @@ func (s *Service) noteVersion(ctx context.Context, agent agents.AgentIdentity, v
 // comparison is also stored for the GUI (recordConfigCheck). The agent's
 // configuration re-assert (PULSIX_CONFIG_INTERVAL) is an ordinary
 // heartbeat, so it reaches this same comparison and is recorded the same
-// way. The heartbeat's probes_supported flag is recorded too, and a capable
+// way. The heartbeat's probes_supported flag is recorded with the rest of
+// the heartbeat (backlog 3.79), and a capable
 // agent's probe_config_version is compared the same way against its probe
 // assignments (probeConfigFor, backlog 3.13a), whose ProbeConfig rides the
 // same acknowledgement on a mismatch.
@@ -247,7 +248,6 @@ func (s *Service) processHeartbeat(ctx context.Context, agent agents.AgentIdenti
 		return reply{}, err
 	}
 	s.noteVersion(ctx, agent, hb.GetVersion())
-	s.recordProbesSupported(ctx, agent, hb.GetProbesSupported())
 	wantsProbes := s.deps.Probes != nil && hb.GetProbesSupported()
 	if s.deps.Checks == nil && !wantsProbes {
 		return reply{}, nil
@@ -314,6 +314,7 @@ func heartbeatReportOf(hb *agentpb.Heartbeat) agents.HeartbeatReport {
 	return agents.HeartbeatReport{
 		Version: hb.GetVersion(), SecretNames: hb.GetSecretNames(), SecretsState: hb.GetSecretsState(),
 		LocalChecks: local, LocalCheckProblems: hb.GetLocalCheckProblems(),
+		ProbesSupported: hb.GetProbesSupported(),
 	}
 }
 

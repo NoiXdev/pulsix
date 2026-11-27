@@ -3,6 +3,7 @@ package probes
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"testing"
 	"time"
@@ -33,20 +34,32 @@ type seriesCall struct {
 	buckets                    int
 }
 
-func (f *fakeViewStore) VantageCurrent(_ context.Context, _, _ uuid.UUID, key string) ([]VantageRow, error) {
+func (f *fakeViewStore) HostVantageCurrent(_ context.Context, _, _ uuid.UUID, keys []string) (map[string][]VantageRow, error) {
 	f.reads++
 	if f.err != nil {
 		return nil, f.err
 	}
-	return slices.Clone(f.rows[key]), nil
+	out := map[string][]VantageRow{}
+	for _, k := range keys {
+		if rows, ok := f.rows[k]; ok {
+			out[k] = slices.Clone(rows)
+		}
+	}
+	return out, nil
 }
 
-func (f *fakeViewStore) SlotAgents(_ context.Context, _, _ uuid.UUID, key string) ([]uuid.UUID, error) {
+func (f *fakeViewStore) HostSlotAgents(_ context.Context, _, _ uuid.UUID, keys []string) (map[string][]uuid.UUID, error) {
 	f.reads++
 	if f.err != nil {
 		return nil, f.err
 	}
-	return slices.Clone(f.agents[key]), nil
+	out := map[string][]uuid.UUID{}
+	for _, k := range keys {
+		if agents, ok := f.agents[k]; ok {
+			out[k] = slices.Clone(agents)
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeViewStore) VantageSeries(_ context.Context, _, host uuid.UUID, key, vantage, item, metric string, from, to time.Time, buckets int) ([]checks.Point, error) {
@@ -88,7 +101,7 @@ func TestHostVantages(t *testing.T) {
 				round(leftover, fresh, f(0), ""),
 			),
 		},
-		// SlotAgents answers by id; the view orders by host name.
+		// HostSlotAgents answers by id; the view orders by host name.
 		agents: map[string][]uuid.UUID{"web": {agentA, agentB}},
 	}
 	names := &fakeHostNames{names: map[uuid.UUID]string{agentA: "zulu", agentB: "alpha"}}
@@ -191,6 +204,34 @@ func TestHostVantagesExpectedOnly(t *testing.T) {
 	v := web.Vantages[0]
 	if v.Vantage != agent.String() || v.Name != "edge-1" || v.Status != StatusNone || v.At != nil || len(v.Observations) != 0 {
 		t.Fatalf("vantage = %+v, want edge-1 with no result", v)
+	}
+}
+
+// TestHostVantagesReadsOncePerHost is backlog 3.79 (2): the view reads
+// the per-vantage rows and the slot agents once each for all of a host's
+// vantage checks, and names the agents once.
+func TestHostVantagesReadsOncePerHost(t *testing.T) {
+	agent := uuid.New()
+	store := &fakeViewStore{rows: map[string][]VantageRow{}, agents: map[string][]uuid.UUID{}}
+	var resolved []checks.Resolved
+	for i := range 20 {
+		key := fmt.Sprintf("c%02d", i)
+		store.agents[key] = []uuid.UUID{agent}
+		resolved = append(resolved, checks.Resolved{Key: key, Plugin: "tcp", Interval: time.Minute,
+			Params: map[string]any{"port": 80, "vantage_groups": []any{uuid.NewString()}}})
+	}
+	names := &fakeHostNames{names: map[uuid.UUID]string{agent: "edge-1"}}
+	got, err := NewView(store, names, func() time.Time { return t0 }).HostVantages(context.Background(), uuid.New(), uuid.New(), resolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 20 || store.reads != 2 || names.calls != 1 {
+		t.Fatalf("%d checks with %d store reads and %d name reads, want 20 with 2 and 1", len(got), store.reads, names.calls)
+	}
+	for key, cv := range got {
+		if len(cv.Vantages) != 2 || cv.Vantages[1].Name != "edge-1" {
+			t.Fatalf("check %s vantages = %+v", key, cv.Vantages)
+		}
 	}
 }
 

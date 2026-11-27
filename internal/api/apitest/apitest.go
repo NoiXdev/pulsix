@@ -447,6 +447,15 @@ func WithOrgSecretsPlugins(lookup func(name string) (checkplugins.Descriptor, bo
 	return func(s *Server) { s.Deps.OrgSecrets = newOrgSecrets(s.DB, s.Checks, lookup) }
 }
 
+// WithVantageStoreWrapper rebuilds Deps.Vantages on wrap's return value,
+// applied to the per-vantage store on the test database, so a test can
+// count what a route asks of it (backlog 3.79).
+func WithVantageStoreWrapper(wrap func(probes.ViewStore) probes.ViewStore) Option {
+	return func(s *Server) {
+		s.Deps.Vantages = probes.NewView(wrap(probes.NewSQLStore(s.DB)), s.Deps.Hosts, time.Now)
+	}
+}
+
 // WithOrgSecretsWrapper replaces Deps.OrgSecrets with wrap's return value,
 // applied to the store New (or an earlier option) built, so a test can
 // count or fail what a route asks of the secret store.

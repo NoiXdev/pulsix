@@ -181,14 +181,23 @@ func (s *SQLStore) AgentAssignments(ctx context.Context, org, agentHost uuid.UUI
 	return out, nil
 }
 
-// SlotAgents are the agent hosts currently assigned to the slot (target
-// host, check key): the expected agent vantages of that check.
-func (s *SQLStore) SlotAgents(ctx context.Context, org, host uuid.UUID, key string) ([]uuid.UUID, error) {
-	ids, err := s.q.ListProbeSlotAgents(ctx, gen.ListProbeSlotAgentsParams{OrgID: org, TargetHostID: host, CheckKey: key})
+// HostSlotAgents are the agent hosts currently assigned to each of keys'
+// slots on host (the expected agent vantages of those checks), by check
+// key, each ordered by agent host id; a key without agents has no entry.
+// One read for all keys (backlog 3.79).
+func (s *SQLStore) HostSlotAgents(ctx context.Context, org, host uuid.UUID, keys []string) (map[string][]uuid.UUID, error) {
+	out := map[string][]uuid.UUID{}
+	if len(keys) == 0 {
+		return out, nil
+	}
+	rows, err := s.q.ListHostProbeSlotAgents(ctx, gen.ListHostProbeSlotAgentsParams{OrgID: org, TargetHostID: host, CheckKeys: keys})
 	if err != nil {
 		return nil, fmt.Errorf("list slot agents: %w", err)
 	}
-	return ids, nil
+	for _, r := range rows {
+		out[r.CheckKey] = append(out[r.CheckKey], r.AgentHostID)
+	}
+	return out, nil
 }
 
 // RecordVantage stores obs as the results of one vantage in one
@@ -244,12 +253,34 @@ func (s *SQLStore) VantageCurrent(ctx context.Context, org, host uuid.UUID, key 
 	}
 	out := make([]VantageRow, len(rows))
 	for i, r := range rows {
-		out[i] = VantageRow{Vantage: r.Vantage, Item: r.Item, Metric: r.Metric, At: r.At, Value: r.Value, Label: r.Label}
-		if r.Error != nil {
-			out[i].Err = *r.Error
-		}
+		out[i] = vantageRowOf(r)
 	}
 	return out, nil
+}
+
+// HostVantageCurrent is VantageCurrent for each of keys on host in one
+// read (backlog 3.79), by check key; a key without rows has no entry.
+func (s *SQLStore) HostVantageCurrent(ctx context.Context, org, host uuid.UUID, keys []string) (map[string][]VantageRow, error) {
+	out := map[string][]VantageRow{}
+	if len(keys) == 0 {
+		return out, nil
+	}
+	rows, err := s.q.ListHostProbeCurrent(ctx, gen.ListHostProbeCurrentParams{OrgID: org, HostID: host, CheckKeys: keys})
+	if err != nil {
+		return nil, fmt.Errorf("list probe current: %w", err)
+	}
+	for _, r := range rows {
+		out[r.CheckKey] = append(out[r.CheckKey], vantageRowOf(r))
+	}
+	return out, nil
+}
+
+func vantageRowOf(r gen.ProbeCurrent) VantageRow {
+	row := VantageRow{Vantage: r.Vantage, Item: r.Item, Metric: r.Metric, At: r.At, Value: r.Value, Label: r.Label}
+	if r.Error != nil {
+		row.Err = *r.Error
+	}
+	return row
 }
 
 // DeleteVantages removes the current rows of every vantage of the slot

@@ -37,8 +37,12 @@ var ErrInvalidInput = errors.New("invalid input")
 
 // ViewStore is the read side of the per-vantage tables: SQLStore.
 type ViewStore interface {
-	VantageCurrent(ctx context.Context, org, host uuid.UUID, key string) ([]VantageRow, error)
-	SlotAgents(ctx context.Context, org, host uuid.UUID, key string) ([]uuid.UUID, error)
+	// HostVantageCurrent is the current rows of each of keys' checks on
+	// host, by check key, each ordered by vantage, item and metric.
+	HostVantageCurrent(ctx context.Context, org, host uuid.UUID, keys []string) (map[string][]VantageRow, error)
+	// HostSlotAgents is the agents assigned to each of keys' slots on
+	// host, by check key.
+	HostSlotAgents(ctx context.Context, org, host uuid.UUID, keys []string) (map[string][]uuid.UUID, error)
 	VantageSeries(ctx context.Context, org, host uuid.UUID, key, vantage, item, metric string, from, to time.Time, buckets int) ([]checks.Point, error)
 }
 
@@ -91,36 +95,45 @@ type slotView struct {
 // HostVantages returns, keyed by check key, the vantages of every check of
 // resolved (a host's resolved synthetic checks) that names vantage groups.
 // A check probed only from the manager (a secret, an http custom
-// request) has none, as the runner never gives it agent vantages. Agents are named with one host read for all checks.
+// request) has none, as the runner never gives it agent vantages. The
+// rows and the assigned agents of all those checks are read in one query
+// each, and agents are named with one host read for all checks (backlog
+// 3.79): three reads per host whatever its number of vantage checks.
 func (v *View) HostVantages(ctx context.Context, org, host uuid.UUID, resolved []checks.Resolved) (map[string]CheckVantages, error) {
 	var slots []slotView
-	var agentIDs []uuid.UUID
+	var keys []string
 	for _, c := range resolved {
 		vant := checkplugins.VantageOf(c.Params)
 		if len(vant.Groups) == 0 || v.managerOnly(c) {
 			continue
 		}
-		rows, err := v.store.VantageCurrent(ctx, org, host, c.Key)
-		if err != nil {
-			return nil, fmt.Errorf("read vantages of %s: %w", c.Key, err)
-		}
-		agents, err := v.store.SlotAgents(ctx, org, host, c.Key)
-		if err != nil {
-			return nil, fmt.Errorf("read vantage agents of %s: %w", c.Key, err)
-		}
-		s := slotView{check: c, policy: vant.Policy, agents: agents, rows: rows}
+		s := slotView{check: c, policy: vant.Policy}
 		if vant.Manager {
 			s.order = append(s.order, VantageManager)
 		}
 		slots = append(slots, s)
-		for _, a := range agents {
+		keys = append(keys, c.Key)
+	}
+	if len(slots) == 0 {
+		return map[string]CheckVantages{}, nil
+	}
+	rows, err := v.store.HostVantageCurrent(ctx, org, host, keys)
+	if err != nil {
+		return nil, fmt.Errorf("read vantages: %w", err)
+	}
+	assigned, err := v.store.HostSlotAgents(ctx, org, host, keys)
+	if err != nil {
+		return nil, fmt.Errorf("read vantage agents: %w", err)
+	}
+	var agentIDs []uuid.UUID
+	for i := range slots {
+		s := &slots[i]
+		s.rows, s.agents = rows[s.check.Key], assigned[s.check.Key]
+		for _, a := range s.agents {
 			if !slices.Contains(agentIDs, a) {
 				agentIDs = append(agentIDs, a)
 			}
 		}
-	}
-	if len(slots) == 0 {
-		return map[string]CheckVantages{}, nil
 	}
 	names := map[uuid.UUID]string{}
 	if len(agentIDs) > 0 {

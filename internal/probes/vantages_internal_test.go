@@ -122,10 +122,178 @@ func TestAssignmentsWrittenOnRefresh(t *testing.T) {
 			t.Fatalf("assignment = %+v", a)
 		}
 	}
-	// An unchanged world writes the same set again (the store diffs it).
+	// An unchanged world writes nothing on the next refresh (backlog 3.79).
 	h.tickAt(30 * time.Second)
-	if rs := h.vstore.Replaces(); len(rs) != 2 || !slices.Equal(agentSet(rs[1].set), agentSet(rs[0].set)) {
-		t.Fatalf("second refresh wrote %+v", rs)
+	if rs := h.vstore.Replaces(); len(rs) != 1 {
+		t.Fatalf("second refresh wrote %+v, want nothing for an unchanged set", rs)
+	}
+}
+
+// TestAssignmentsWrittenOnlyWhenChanged is backlog 3.79 (1): a refresh
+// writes the organization's set when it differs from the one last
+// written — an agent leaving, a changed param — and not otherwise.
+func TestAssignmentsWrittenOnlyWhenChanged(t *testing.T) {
+	h := newHarness(t, nil)
+	f := h.addFleet("a1", "a2")
+	h.world.addHost(h.org, hosts.Host{ID: h.host, Name: "target", Address: "192.0.2.1", Monitored: true},
+		vantageCheck("web", "tcp", time.Minute, []uuid.UUID{f.group}, map[string]any{"port": float64(443)}))
+	h.tickAt(0)
+	h.tickAt(30 * time.Second)
+	if rs := h.vstore.Replaces(); len(rs) != 1 || len(rs[0].set) != 2 {
+		t.Fatalf("writes = %+v, want the first set only", rs)
+	}
+	h.agents.set(h.org, h.host, f.agents[0]) // a2 goes offline
+	h.tickAt(60 * time.Second)
+	h.tickAt(90 * time.Second)
+	rs := h.vstore.Replaces()
+	if len(rs) != 2 || !slices.Equal(agentSet(rs[1].set), f.agents[:1]) {
+		t.Fatalf("writes = %+v, want one more with a1 alone", rs)
+	}
+	h.world.setChecks(h.host, vantageCheck("web", "tcp", time.Minute, []uuid.UUID{f.group}, map[string]any{"port": float64(8443)}))
+	h.tickAt(120 * time.Second)
+	h.tickAt(150 * time.Second)
+	rs = h.vstore.Replaces()
+	if len(rs) != 3 || rs[2].set[0].Params["port"] != float64(8443) {
+		t.Fatalf("writes = %+v, want one more with the changed param", rs)
+	}
+}
+
+// TestAssignmentsWrittenOnAddressOrIntervalChange: a change of the
+// target's address or of the check's interval alone is a changed set.
+func TestAssignmentsWrittenOnAddressOrIntervalChange(t *testing.T) {
+	for name, change := range map[string]func(h *harness, f fleet){
+		"address": func(h *harness, f fleet) {
+			h.world.addHost(h.org, hosts.Host{ID: h.host, Name: "target", Address: "192.0.2.77", Monitored: true},
+				vantageCheck("web", "tcp", time.Minute, []uuid.UUID{f.group}, nil))
+		},
+		"interval": func(h *harness, f fleet) {
+			h.world.setChecks(h.host, vantageCheck("web", "tcp", 2*time.Minute, []uuid.UUID{f.group}, nil))
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t, nil)
+			f := h.addFleet("a1")
+			h.world.addHost(h.org, hosts.Host{ID: h.host, Name: "target", Address: "192.0.2.1", Monitored: true},
+				vantageCheck("web", "tcp", time.Minute, []uuid.UUID{f.group}, nil))
+			h.tickAt(0)
+			h.tickAt(30 * time.Second)
+			change(h, f)
+			h.tickAt(60 * time.Second)
+			h.tickAt(90 * time.Second)
+			rs := h.vstore.Replaces()
+			if len(rs) != 2 || len(rs[1].set) != 1 {
+				t.Fatalf("writes = %+v, want one more after the %s change", rs, name)
+			}
+			if a := rs[1].set[0]; (name == "address") != (a.Address == "192.0.2.77") || (name == "interval") != (a.Interval == 2*time.Minute) {
+				t.Fatalf("written %+v, want only the %s changed", a, name)
+			}
+		})
+	}
+}
+
+// TestAssignmentRecordForgetsDeletedOrgs: an organization that is no
+// longer listed loses its record at the end of the refresh, so the map
+// does not grow with every organization that ever existed; listed again,
+// it is written at once.
+func TestAssignmentRecordForgetsDeletedOrgs(t *testing.T) {
+	orgs := &fakeOrgList{}
+	h := newHarness(t, func(_ *harness, d *Deps) { d.Orgs = orgs })
+	orgs.set(h.org)
+	h.world.addHost(h.org, hosts.Host{ID: h.host, Address: "192.0.2.1", Monitored: true}, synthetic("web", "tcp", time.Minute))
+	h.tickAt(0)
+	if _, ok := h.r.written[h.org]; !ok {
+		t.Fatal("no record after the first write")
+	}
+	orgs.set()
+	h.tickAt(30 * time.Second)
+	if len(h.r.written) != 0 {
+		t.Fatalf("records = %v, want the unlisted organization's gone", h.r.written)
+	}
+	orgs.set(h.org)
+	h.tickAt(60 * time.Second)
+	if rs := h.vstore.Replaces(); len(rs) != 2 {
+		t.Fatalf("writes = %d, want the organization written again once listed", len(rs))
+	}
+}
+
+// TestReacquiredLockForgetsState: a TryLock that answers true on a new
+// session (the old one died, another manager may have held the lock in
+// between) is a lost and regained lock: the assignment records, the
+// schedule and the slots' assertion times start afresh, and every
+// organization is written again although nothing changed here.
+func TestReacquiredLockForgetsState(t *testing.T) {
+	h := newHarness(t, nil)
+	f := h.addFleet("a1")
+	h.world.addHost(h.org, hosts.Host{ID: h.host, Address: "192.0.2.1", Monitored: true},
+		vantageCheck("web", "tcp", time.Minute, []uuid.UUID{f.group}, nil))
+	h.tickAt(0)
+	s := slot{host: h.host, key: "web"}
+	h.tickAt(5 * time.Second)
+	if rs := h.vstore.Replaces(); len(rs) != 1 {
+		t.Fatalf("writes = %d before the reacquire, want 1", len(rs))
+	}
+	h.locker.reacquire()
+	h.tickAt(10 * time.Second)
+	rs := h.vstore.Replaces()
+	if len(rs) != 2 || !slices.Equal(agentSet(rs[1].set), agentSet(rs[0].set)) {
+		t.Fatalf("writes = %+v, want the same set written again on the new session", rs)
+	}
+	if got := h.r.targets[s].assertSince; !got.Equal(t0.Add(10 * time.Second)) {
+		t.Fatalf("assertSince = %v, want the refresh on the new session", got)
+	}
+	// The same session on later ticks forgets nothing.
+	h.tickAt(15 * time.Second)
+	if rs := h.vstore.Replaces(); len(rs) != 2 {
+		t.Fatalf("writes = %d, want none more on the same session", len(rs))
+	}
+}
+
+// TestAssignmentsRewrittenAfterThePeriod is backlog 3.79 (1), R2: an
+// unchanged set, empty or not, is written again once its last write is
+// assignmentRewrite old, so a change made outside the runner heals.
+func TestAssignmentsRewrittenAfterThePeriod(t *testing.T) {
+	for name, groups := range map[string]bool{"assigned": true, "empty": false} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t, nil)
+			f := h.addFleet("a1")
+			c := synthetic("web", "tcp", time.Minute)
+			if groups {
+				c = vantageCheck("web", "tcp", time.Minute, []uuid.UUID{f.group}, nil)
+			}
+			h.world.addHost(h.org, hosts.Host{ID: h.host, Address: "192.0.2.1", Monitored: true}, c)
+			for at := time.Duration(0); at < assignmentRewrite; at += 30 * time.Second {
+				h.tickAt(at)
+			}
+			if rs := h.vstore.Replaces(); len(rs) != 1 {
+				t.Fatalf("writes before the period = %d, want 1", len(rs))
+			}
+			h.tickAt(assignmentRewrite)
+			h.tickAt(assignmentRewrite + 30*time.Second)
+			rs := h.vstore.Replaces()
+			if len(rs) != 2 || !slices.Equal(agentSet(rs[1].set), agentSet(rs[0].set)) {
+				t.Fatalf("writes = %+v, want the same set once more at the period", rs)
+			}
+		})
+	}
+}
+
+// TestAssignmentWriteFailureRetriedNextRefresh: a failed write leaves no
+// record of the set, so the next refresh writes it although nothing
+// changed.
+func TestAssignmentWriteFailureRetriedNextRefresh(t *testing.T) {
+	h := newHarness(t, nil)
+	f := h.addFleet("a1")
+	h.world.addHost(h.org, hosts.Host{ID: h.host, Address: "192.0.2.1", Monitored: true},
+		vantageCheck("web", "tcp", time.Minute, []uuid.UUID{f.group}, nil))
+	h.tickAt(0)
+	h.vstore.setErrs(errors.New("db down"), nil, nil)
+	h.agents.set(h.org, h.host) // a1 goes: the write fails
+	h.tickAt(30 * time.Second)
+	h.vstore.setErrs(nil, nil, nil)
+	h.agents.set(h.org, h.host, f.agents[0]) // back to the set last written
+	h.tickAt(60 * time.Second)
+	if rs := h.vstore.Replaces(); len(rs) != 2 || !slices.Equal(agentSet(rs[1].set), f.agents) {
+		t.Fatalf("writes = %+v, want the set written again after the failed write", rs)
 	}
 }
 
@@ -499,18 +667,28 @@ func TestCustomRequestCheckStaysManagerOnly(t *testing.T) {
 }
 
 func TestLostLockForgetsVantageState(t *testing.T) {
-	h := newHarness(t, nil)
-	h.world.addHost(h.org, hosts.Host{ID: h.host, Address: "192.0.2.1", Monitored: true}, synthetic("web", "tcp", time.Minute))
-	h.tickAt(0)
-	h.locker.mu.Lock()
-	h.locker.allow = false
-	h.locker.mu.Unlock()
-	h.tickAt(5 * time.Second)
-	h.locker.mu.Lock()
-	h.locker.allow = true
-	h.locker.mu.Unlock()
-	h.tickAt(10 * time.Second)
-	if rs := h.vstore.Replaces(); len(rs) != 2 {
-		t.Fatalf("assignment writes = %d, want the empty set written again after regaining the lock", len(rs))
+	for name, groups := range map[string]bool{"assigned": true, "empty": false} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t, nil)
+			f := h.addFleet("a1")
+			c := synthetic("web", "tcp", time.Minute)
+			if groups {
+				c = vantageCheck("web", "tcp", time.Minute, []uuid.UUID{f.group}, nil)
+			}
+			h.world.addHost(h.org, hosts.Host{ID: h.host, Address: "192.0.2.1", Monitored: true}, c)
+			h.tickAt(0)
+			h.locker.mu.Lock()
+			h.locker.allow = false
+			h.locker.mu.Unlock()
+			h.tickAt(5 * time.Second)
+			h.locker.mu.Lock()
+			h.locker.allow = true
+			h.locker.mu.Unlock()
+			h.tickAt(10 * time.Second)
+			rs := h.vstore.Replaces()
+			if len(rs) != 2 || !slices.Equal(agentSet(rs[1].set), agentSet(rs[0].set)) {
+				t.Fatalf("assignment writes = %+v, want the same set written again after regaining the lock", rs)
+			}
+		})
 	}
 }

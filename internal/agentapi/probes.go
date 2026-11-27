@@ -31,17 +31,6 @@ func (s *Service) logger() *slog.Logger {
 	return slog.Default()
 }
 
-// recordProbesSupported hands the heartbeat's probes_supported flag to the
-// registry, which writes only a change. A failed write is logged, never
-// fatal: the flag decides assignments the probe runner makes, and the next
-// heartbeat writes it again.
-func (s *Service) recordProbesSupported(ctx context.Context, agent agents.AgentIdentity, supported bool) {
-	if err := s.deps.Agents.SetProbesSupported(ctx, agent.HostID, supported); err != nil {
-		s.logger().WarnContext(ctx, "record agent probes_supported; the next heartbeat writes it again",
-			"serial", agent.Serial, "org_id", agent.OrgID, "host_id", agent.HostID, "err", err)
-	}
-}
-
 // probeConfigFor reads the agent's probe assignments and returns them as a
 // ProbeConfig when their version differs from reported, nil when it is the
 // same. A read or encoding fault is logged and answered with nil — the ack

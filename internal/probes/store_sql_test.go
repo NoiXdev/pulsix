@@ -100,23 +100,23 @@ func TestReplaceOrgAssignmentsDiffs(t *testing.T) {
 	if !reflect.DeepEqual(got, []probes.Assignment{second[1]}) {
 		t.Errorf("a2 = %+v, want %+v", got, second[1])
 	}
-	agents, err := store.SlotAgents(scoped, org, target, "k")
+	agents, err := store.HostSlotAgents(scoped, org, target, []string{"k"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := []uuid.UUID{a1, a2, a3}
 	slices.SortFunc(want, func(x, y uuid.UUID) int { return slices.Compare(x[:], y[:]) })
-	if !reflect.DeepEqual(agents, want) {
-		t.Errorf("SlotAgents = %v, want %v", agents, want)
+	if !reflect.DeepEqual(agents["k"], want) {
+		t.Errorf("HostSlotAgents = %v, want %v", agents, want)
 	}
 
 	// Gone: a1 and a3 leave.
 	if err := store.ReplaceOrgAssignments(scoped, org, second[1:2]); err != nil {
 		t.Fatal(err)
 	}
-	agents, err = store.SlotAgents(scoped, org, target, "k")
-	if err != nil || !reflect.DeepEqual(agents, []uuid.UUID{a2}) {
-		t.Fatalf("after delete SlotAgents = %v, %v", agents, err)
+	agents, err = store.HostSlotAgents(scoped, org, target, []string{"k"})
+	if err != nil || !reflect.DeepEqual(agents, map[string][]uuid.UUID{"k": {a2}}) {
+		t.Fatalf("after delete HostSlotAgents = %v, %v", agents, err)
 	}
 
 	// The other organization is untouched, and an empty set clears only this one.
@@ -329,6 +329,95 @@ func TestVantageCurrentIsOrgScoped(t *testing.T) {
 	rows, err = store.VantageCurrent(db.WithOrgScope(ctx, otherOrg), org, target, "k")
 	if err != nil || len(rows) != 0 {
 		t.Fatalf("scope mismatch read %d rows, %v", len(rows), err)
+	}
+}
+
+// TestHostVantageReadsScoped is backlog 3.79 (2): the host page's two
+// batched reads answer, per asked key, exactly what the per-check reads
+// did — the rows of that host's check in vantage, item, metric order and
+// its assigned agents by id — and nothing of another key, host or
+// organization, even when asked for the other organization's id.
+func TestHostVantageReadsScoped(t *testing.T) {
+	ctx := context.Background()
+	d := testdb.Open(t)
+	store := probes.NewSQLStore(d)
+	org, host := seedStoreOrg(t, d, "pv-batch")
+	otherOrg, otherHost := seedStoreOrg(t, d, "pv-batch-other")
+	target, neighbour, a1, a2 := host("t"), host("n"), host("a1"), host("a2")
+	ot, oa := otherHost("ot"), otherHost("oa")
+	scoped, otherScoped := db.WithOrgScope(ctx, org), db.WithOrgScope(ctx, otherOrg)
+	at := time.Now().UTC().Truncate(time.Second)
+	record := func(ctx context.Context, org uuid.UUID, vantage string, host uuid.UUID, key string) {
+		t.Helper()
+		v := 1.0
+		if err := store.RecordVantage(ctx, org, vantage, []checks.Observation{
+			{HostID: host, CheckKey: key, Metric: "tcp.up", At: at, Value: &v},
+			{HostID: host, CheckKey: key, Item: "i", Metric: "tcp.connect_ms", At: at, Value: &v},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, key := range []string{"k1", "k2", "k3"} {
+		record(scoped, org, "manager", target, key)
+		record(scoped, org, a2.String(), target, key)
+		record(scoped, org, a1.String(), target, key)
+	}
+	record(scoped, org, "manager", neighbour, "k1")
+	record(otherScoped, otherOrg, "manager", ot, "k1")
+	if err := store.ReplaceOrgAssignments(scoped, org, []probes.Assignment{
+		asg(org, a2, target, "k1", time.Minute, nil), asg(org, a1, target, "k1", time.Minute, nil),
+		asg(org, a1, target, "k3", time.Minute, nil), asg(org, a1, neighbour, "k1", time.Minute, nil),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ReplaceOrgAssignments(otherScoped, otherOrg, []probes.Assignment{asg(otherOrg, oa, ot, "k1", time.Minute, nil)}); err != nil {
+		t.Fatal(err)
+	}
+
+	keys := []string{"k1", "k2", "k3", "none"}
+	rows, err := store.HostVantageCurrent(scoped, org, target, keys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range keys {
+		one, err := store.VantageCurrent(scoped, org, target, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if same := len(one) == 0 && len(rows[key]) == 0 || reflect.DeepEqual(rows[key], one); !same {
+			t.Errorf("key %s: batched rows %+v, per-check rows %+v", key, rows[key], one)
+		}
+	}
+	if len(rows) != 3 {
+		t.Errorf("batched rows for %d keys, want k1..k3", len(rows))
+	}
+	agents, err := store.HostSlotAgents(scoped, org, target, keys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	k1 := []uuid.UUID{a1, a2}
+	slices.SortFunc(k1, func(x, y uuid.UUID) int { return slices.Compare(x[:], y[:]) })
+	if want := map[string][]uuid.UUID{"k1": k1, "k3": {a1}}; !reflect.DeepEqual(agents, want) {
+		t.Errorf("HostSlotAgents = %v, want %v", agents, want)
+	}
+	if rows, err := store.HostVantageCurrent(scoped, org, target, nil); err != nil || len(rows) != 0 {
+		t.Errorf("no keys: %v, %v", rows, err)
+	}
+
+	// The other organization's rows stay hidden, by its id or this one's.
+	for _, asked := range []uuid.UUID{otherOrg, org} {
+		if rows, err := store.HostVantageCurrent(scoped, asked, ot, []string{"k1"}); err != nil || len(rows) != 0 {
+			t.Errorf("org %s: other org's rows %v, %v", asked, rows, err)
+		}
+		if agents, err := store.HostSlotAgents(scoped, asked, ot, []string{"k1"}); err != nil || len(agents) != 0 {
+			t.Errorf("org %s: other org's agents %v, %v", asked, agents, err)
+		}
+	}
+	if rows, err := store.HostVantageCurrent(otherScoped, org, target, keys); err != nil || len(rows) != 0 {
+		t.Errorf("scope mismatch rows %v, %v", rows, err)
+	}
+	if agents, err := store.HostSlotAgents(otherScoped, org, target, keys); err != nil || len(agents) != 0 {
+		t.Errorf("scope mismatch agents %v, %v", agents, err)
 	}
 }
 

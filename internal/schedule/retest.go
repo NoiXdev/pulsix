@@ -231,6 +231,8 @@ type AdvisoryLocker struct {
 	pool *pgxpool.Pool
 	key  int64
 	conn *pgxpool.Conn
+	// gen counts the sessions the lock was taken on (Generation).
+	gen uint64
 }
 
 // NewAdvisoryLocker builds the locker for the pool and a named key.
@@ -274,8 +276,18 @@ func (l *AdvisoryLocker) TryLock(ctx context.Context) (bool, error) {
 		return false, nil
 	}
 	l.conn = conn
+	l.gen++
 	return true, nil
 }
+
+// Generation counts the sessions TryLock took the lock on: it changes
+// exactly when a TryLock answers true on a new session — the first
+// acquire, one after Unlock, and one after the held session died (backlog
+// 3.79 review). A loop that holds the lock across ticks compares it to
+// tell a lock it kept from one it lost and took again between two ticks,
+// when another instance may have held it and changed what the loop
+// remembers. Loops that lock once per pass need not look at it.
+func (l *AdvisoryLocker) Generation() uint64 { return l.gen }
 
 // stillHeld reports whether the held session still holds the lock. A
 // single-bigint advisory lock shows in pg_locks as classid = the key's

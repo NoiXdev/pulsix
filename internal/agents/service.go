@@ -250,10 +250,10 @@ type Store interface {
 	// carry none).
 	Touch(ctx context.Context, serial, version string) error
 	// Heartbeat is Touch for a heartbeat message: last_seen, version, the
-	// secrets report and the local checks report in one statement,
-	// org-unscoped. A report that is not Known stores "unknown" (NULL),
-	// replacing any earlier one.
-	Heartbeat(ctx context.Context, serial, version string, secrets SecretsReport, local LocalChecksReport) error
+	// secrets report, the local checks report and the probes_supported
+	// flag (migration 00098) in one statement, org-unscoped. A report that
+	// is not Known stores "unknown" (NULL), replacing any earlier one.
+	Heartbeat(ctx context.Context, serial, version string, secrets SecretsReport, local LocalChecksReport, probesSupported bool) error
 	// LocalChecksByHosts reads the local checks reports of the listed
 	// hosts' agents, org-scoped; a host without an agent has no entry.
 	LocalChecksByHosts(ctx context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID]LocalChecksReport, error)
@@ -265,9 +265,6 @@ type Store interface {
 	// configCheckRewrite. An unknown serial writes nothing and is no
 	// error.
 	RecordConfigCheck(ctx context.Context, serial, reported, expected string) error
-	// SetProbesSupported stores the heartbeat's probes_supported flag
-	// (migration 00098) by host, org-unscoped; it writes only on change.
-	SetProbesSupported(ctx context.Context, hostID uuid.UUID, supported bool) error
 	// ProbeCapableAgents lists the organization's agents that report
 	// probes_supported, with their last heartbeat and reported heartbeat
 	// interval, ordered by host id.
@@ -593,13 +590,15 @@ func (s *Service) Touch(ctx context.Context, serial, version string) error {
 }
 
 // HeartbeatReport is what one heartbeat message says about the agent: its
-// build, its secrets report and its local checks report, as sent.
+// build, its secrets report, its local checks report and whether it can
+// probe other hosts' checks (ProbesSupported), as sent.
 type HeartbeatReport struct {
 	Version            string
 	SecretNames        []string
 	SecretsState       string
 	LocalChecks        []LocalCheckInput
 	LocalCheckProblems []string
+	ProbesSupported    bool
 }
 
 // Heartbeat records a heartbeat message: last_seen becomes now, version
@@ -617,7 +616,7 @@ func (s *Service) Heartbeat(ctx context.Context, serial string, r HeartbeatRepor
 	if s.drops.changed(serial, dropped) {
 		logDroppedLocalChecks(ctx, s.log, serial, dropped)
 	}
-	return s.store.Heartbeat(ctx, serial, boundVersion(r.Version), secretsReportOf(r.SecretNames, r.SecretsState), local)
+	return s.store.Heartbeat(ctx, serial, boundVersion(r.Version), secretsReportOf(r.SecretNames, r.SecretsState), local, r.ProbesSupported)
 }
 
 // List returns orgID's agents ordered by agent name.
@@ -666,13 +665,6 @@ type ProbeCapable struct {
 	// HeartbeatInterval is the agent's reported heartbeat interval, nil
 	// when it never reported one (OnlineWindow).
 	HeartbeatInterval *time.Duration
-}
-
-// SetProbesSupported records whether the host's agent can run probes for
-// other hosts' checks (the heartbeat's flag); an unchanged value writes
-// nothing.
-func (s *Service) SetProbesSupported(ctx context.Context, hostID uuid.UUID, supported bool) error {
-	return s.store.SetProbesSupported(ctx, hostID, supported)
 }
 
 // OnlineProbeAgents is the host ids of the organization's agents that

@@ -135,8 +135,7 @@ type fakeAgentStore struct {
 	faultNextLookup   bool  // arm: the next lookup proceeds, the one after fails
 	faultAfterNext    bool
 
-	probesSupported    []probesSupportedCall // per SetProbesSupported call
-	probesSupportedErr error
+	probesSupported []probesSupportedCall // per Heartbeat call
 
 	intervals   []intervalCall // per RecordHeartbeatInterval call
 	intervalErr error
@@ -345,12 +344,13 @@ func (f *fakeAgentStore) Touch(_ context.Context, serial, version string) error 
 
 // Heartbeat is Touch plus the secrets and local checks reports, which it
 // records and stores on the agent row the way the SQL store does.
-func (f *fakeAgentStore) Heartbeat(ctx context.Context, serial, version string, secrets agents.SecretsReport, local agents.LocalChecksReport) error {
+func (f *fakeAgentStore) Heartbeat(ctx context.Context, serial, version string, secrets agents.SecretsReport, local agents.LocalChecksReport, probesSupported bool) error {
 	if err := f.Touch(ctx, serial, version); err != nil {
 		return err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.probesSupported = append(f.probesSupported, probesSupportedCall{serial, probesSupported})
 	f.reports = append(f.reports, secrets)
 	f.localReports = append(f.localReports, local)
 	for i := range f.agentsR {
@@ -1067,17 +1067,10 @@ func keyPEMOf(t *testing.T, key *ecdsa.PrivateKey) []byte {
 	return pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der})
 }
 
-// probesSupportedCall is one SetProbesSupported call.
+// probesSupportedCall is one Heartbeat call's serial and flag.
 type probesSupportedCall struct {
-	host      uuid.UUID
+	serial    string
 	supported bool
-}
-
-func (f *fakeAgentStore) SetProbesSupported(_ context.Context, host uuid.UUID, supported bool) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.probesSupported = append(f.probesSupported, probesSupportedCall{host, supported})
-	return f.probesSupportedErr
 }
 
 func (f *fakeAgentStore) probesSupportedCalls() []probesSupportedCall {
